@@ -1,15 +1,18 @@
 import { ItemValue, QuestionMatrixModel, Question } from "survey-core";
-import { IAnswersData, SelectBase } from "./selectBase";
+import { SelectBase } from "./selectBase";
+import { VisualizationManager } from "./visualizationManager";
+import { IAnswersData } from "./visualizerBase";
 
 export class Matrix extends SelectBase {
   constructor(
     question: Question,
     data: Array<{ [index: string]: any }>,
     options?: Object,
-    name?: string
+    type?: string
   ) {
-    super(question, data, options, name || "matrix");
-    this.getAnswersData();
+    super(question, data, options, type || "matrix");
+    this._transposeData = true;
+    // this.getAnswersData();
   }
 
   protected get matrixQuestion(): QuestionMatrixModel {
@@ -44,9 +47,9 @@ export class Matrix extends SelectBase {
     datasets: Array<Array<any>>
   ): Array<boolean> {
     let result: Array<boolean> = Array<boolean>();
-    for (let i = 0; i < datasets[0].length; i++) {
-      for (let j = 0; j < datasets.length; j++) {
-        if (datasets[j][i] != 0) {
+    for(let i = 0; i < datasets[0].length; i++) {
+      for(let j = 0; j < datasets.length; j++) {
+        if(datasets[j][i] != 0) {
           result[i] = true;
         }
       }
@@ -55,8 +58,8 @@ export class Matrix extends SelectBase {
   }
 
   private getHasAnswersInSeries(dataset: Array<any>) {
-    for (let i = 0; i < dataset.length; i++) {
-      if (dataset[i] != 0) {
+    for(let i = 0; i < dataset.length; i++) {
+      if(dataset[i] != 0) {
         return true;
       }
     }
@@ -66,6 +69,7 @@ export class Matrix extends SelectBase {
   protected hideEmptyAnswersInData(answersData: IAnswersData): IAnswersData {
     const result: IAnswersData = {
       datasets: <Array<Array<any>>>[],
+      values: <Array<string>>[],
       labels: <Array<string>>[],
       colors: <Array<string>>[],
       texts: <Array<Array<any>>>[],
@@ -75,11 +79,11 @@ export class Matrix extends SelectBase {
     const hasAnswersInAllSeriesArr = this.getHasAnswersInAllSeriesArray(
       answersData.datasets
     );
-    for (let i = 0; i < answersData.datasets.length; i++) {
+    for(let i = 0; i < answersData.datasets.length; i++) {
       const hasAnswersInSeries = this.getHasAnswersInSeries(
         answersData.datasets[i]
       );
-      if (hasAnswersInSeries) {
+      if(hasAnswersInSeries) {
         result.labels.push(answersData.labels[i]);
         result.colors.push(answersData.colors[i]);
       } else {
@@ -87,8 +91,8 @@ export class Matrix extends SelectBase {
       }
       const datasets = [];
       const texts = [];
-      for (let j = 0; j < answersData.datasets[0].length; j++) {
-        if (hasAnswersInAllSeriesArr[j]) {
+      for(let j = 0; j < answersData.datasets[0].length; j++) {
+        if(hasAnswersInAllSeriesArr[j]) {
           datasets.push(answersData.datasets[i][j]);
           texts.push(answersData.texts[i][j]);
         }
@@ -96,28 +100,14 @@ export class Matrix extends SelectBase {
       result.datasets.push(datasets);
       result.texts.push(texts);
     }
-    for (let i = 0; i < answersData.datasets[0].length; i++) {
-      if (hasAnswersInAllSeriesArr[i]) {
+    for(let i = 0; i < answersData.datasets[0].length; i++) {
+      if(hasAnswersInAllSeriesArr[i]) {
         result.seriesLabels.push(answersData.seriesLabels[i]);
       }
     }
     return result;
   }
 
-  getData(): any[] {
-    const statistics = super.getData();
-    const series = this.getSeriesValues();
-    const values = this.getValues();
-    if (series.length > 1) {
-      const preparedData: Array<Array<number>> = [];
-      values.forEach((val, valueIndex) => {
-        const seriesData = series.map(
-          (seriesName, seriesIndex) => statistics[seriesIndex][valueIndex]
-        );
-        preparedData.push(seriesData);
-      });
-      return preparedData;
-    }
-    return statistics;
-  }
 }
+
+VisualizationManager.registerVisualizer("matrix", Matrix, undefined, "matrix");

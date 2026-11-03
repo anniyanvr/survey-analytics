@@ -72,14 +72,15 @@ var data = [
 var options = {
   // allowDynamicLayout: false,
   // allowHideQuestions: false,
-  allowChangeAnswersOrder: true,
+  allowShowPercentages: true,
+  allowSortAnswers: true,
   allowTransposeData: true
 };
 
-var visPanel = new SurveyAnalytics.VisualizationPanel(
+var visPanel = new SurveyAnalyticsPlotly.VisualizationPanel(
   survey.getAllQuestions(),
   data,
   options
 );
-visPanel.showHeader = true;
+visPanel.showToolbar = true;
 visPanel.render(document.getElementById("summaryContainer"));

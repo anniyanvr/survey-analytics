@@ -1,101 +1,347 @@
-import { Question, QuestionCommentModel, settings } from "survey-core";
-import { IDataInfo, DataProvider } from "./dataProvider";
+import { Question, QuestionCommentModel, Event, settings, hasLicense, ITheme, mergeObjects } from "survey-core";
+import { DataProvider, GetDataFn } from "./dataProvider";
 import { VisualizerFactory } from "./visualizerFactory";
-import { DocumentHelper } from "./utils";
+import { VisualizationManager } from "./visualizationManager";
+import { createLoadingIndicator, getDiffsFromDefaults } from "./utils";
 import { localization } from "./localizationManager";
-import { Event } from "survey-core";
+import { defaultStatisticsCalculator } from "./statisticCalculators";
+import { DashboardTheme } from "./theme";
+import { SidebarWidget } from "./utils/sidebarWidget";
+import { DocumentHelper } from "./utils/documentHelper";
+import { SideBarItemCreators } from "./sideBarItemCreators";
 
-var styles = require("./visualizerBase.scss");
+import "./visualizerBase.scss";
+
+export interface IChartAdapter {
+  getChartTypes(): string[];
+  create(chartNode: HTMLElement): Promise<any>;
+  update(chartNode: HTMLElement): Promise<any> ;
+  destroy(node: HTMLElement): void;
+}
+
+export interface ICalculatedDataInfo {
+  dataPath?: string;
+  valueNames: Array<string>;
+  seriesNames?: Array<string>;
+  getLabel?(value: string): string;
+  getSeriesLabel?(series: string): string;
+}
+
+export declare type ICalculationResult<T = number> = {
+  data: Array<Array<T>>,
+  values: Array<string>,
+  series?: Array<string>,
+};
+
+export interface IAnswersData {
+  datasets: Array<Array<any>>;
+  values: Array<string>;
+  labels: Array<string>;
+  colors: Array<string>;
+  texts: Array<Array<any>>;
+  seriesLabels: Array<string>;
+  labelsTitle?: string;
+  valuesTitle?: string;
+}
+
+export interface IDataInfo {
+  name: string; // TODO - remove from this interface
+  dataPath?: string;
+  dataNames: Array<string>;
+  getValues(): Array<any>;
+  getLabels(): Array<string>;
+  getSeriesValues(): Array<string>;
+  getSeriesLabels(): Array<string>;
+}
+
+export type ToolbarItemType = "button" | "dropdown" | "filter"| "license";
+
+type ToolbarItemCreators = {
+  [name: string]: {
+    creator: (toolbar?: HTMLDivElement) => HTMLElement,
+    type: ToolbarItemType,
+    index: number,
+    groupIndex: number,
+  },
+};
+
+export class PostponeHelper {
+  public static postponeFunction: (fn: () => void, timeout?: number) => any;
+  public static postpone(fn: () => void, timeout?: number): any {
+    if(PostponeHelper.postponeFunction) {
+      return PostponeHelper.postponeFunction(fn, timeout);
+    } else {
+      return setTimeout(fn, timeout);
+    }
+  }
+}
 
 /**
- * VisualizerBase is a base object for all visuzlizers. It responsible for the rendering and destroying visualizer.
+ * A base object for all visualizers. Use it to implement a custom visualizer.
  *
- * constructor parameters:
- * question - a survey question to visualize,
- * data - an array of answers in format of survey result,
- * options - object with the following options,
- * name - visualizer name
+ * Constructor parameters:
  *
- * options:
- * seriesValues - an array of series values in data to group data by series,
- * seriesLabels - labels for series to display, if not passed the seriesValues are used as labels,
- * survey - pass survey instance to use localses from the survey JSON,
- * dataProvider - dataProvider for this visualizer,
+ * - `question`: [`Question`](https://surveyjs.io/form-library/documentation/api-reference/question)\
+ * A survey question to visualize.
+ * - `data`: `Array<any>`\
+ * Survey results.
+ * - `options`\
+ * An object with the following properties:
+ *    - `dataProvider`: `DataProvider`\
+ *    A data provider for this visualizer.
+ *    - `renderContent`: `(contentContainer: HTMLElement, visualizer: VisualizerBase) => void`\
+ *    A function that renders the visualizer's HTML markup. Append the markup to `contentContainer`.
+ *    - `survey`: [`SurveyModel`](https://surveyjs.io/form-library/documentation/api-reference/survey-data-model)\
+ *    Pass a `SurveyModel` instance if you want to use locales from the survey JSON schema.
+ *    - `seriesValues`: `Array<string>`\
+ *    Series values used to group data.
+ *    - `seriesLabels`: `Array<string>`\
+ *    Series labels to display. If this property is not set, `seriesValues` are used as labels.
+ * - `type`: `string`\
+ * *(Optional)* The visualizer's type.
  *
+ * [View Demo](https://surveyjs.io/dashboard/examples/how-to-plot-survey-data-in-custom-bar-chart/ (linkStyle))
  */
 export class VisualizerBase implements IDataInfo {
-  private _showHeader = true;
+  public static haveCommercialLicense: boolean = false;
+  public static suppressVisualizerStubRendering: boolean = false;
+  public static get chartAdapterType(): any {
+    return VisualizationManager.chartAdapterType;
+  }
+  public static set chartAdapterType(value: any) {
+    VisualizationManager.chartAdapterType = value;
+  }
+
+  private _appliedTheme: DashboardTheme;
+  private _theme = new DashboardTheme();
+  private _showToolbar = true;
   private _footerVisualizer: VisualizerBase = undefined;
   private _dataProvider: DataProvider = undefined;
+  private _getDataCore: (dataInfo: IDataInfo) => ICalculationResult = undefined;
   public labelTruncateLength: number = 27;
+  protected haveCommercialLicense: boolean = false;
   protected renderResult: HTMLElement = undefined;
   protected toolbarContainer: HTMLElement = undefined;
   protected headerContainer: HTMLElement = undefined;
   protected contentContainer: HTMLElement = undefined;
   protected footerContainer: HTMLElement = undefined;
+  protected bannerContainer: HTMLElement = undefined;
+  protected wrapperContainer: HTMLElement = undefined;
   protected _supportSelection: boolean = false;
+  protected _chartAdapter: IChartAdapter = undefined;
   // public static otherCommentQuestionType = "comment"; // TODO: make it configureable - allow choose what kind of question/visualizer will be used for comments/others
   public static otherCommentCollapsed = true;
+  protected _footerIsCollapsed: boolean = undefined;
 
   /**
-   * The event is fired right after a visualizer's content is rendered in DOM.
+   * Raised after the visualizer content is rendered.
+   *
+   * Parameters:
+   *
+   * - `sender`: `VisualizerBase`\
+   * The current `VisualizerBase` instance.
+   * - `options.htmlElement`: `HTMLElement`\
+   * An `HTMLElement` that contains the rendered content.
+   * @see render
+   * @see refresh
+   * @hidefor Dashboard, VisualizationPanel
    **/
   public onAfterRender: Event<
     (sender: VisualizerBase, options: any) => any,
+    VisualizerBase,
     any
-  > = new Event<(sender: VisualizerBase, options: any) => any, any>();
+  > = new Event<(sender: VisualizerBase, options: any) => any, VisualizerBase, any>();
 
   protected afterRender(contentContainer: HTMLElement) {
     this.onAfterRender.fire(this, { htmlElement: contentContainer });
   }
 
-  protected toolbarItemCreators: { [name: string]: (toolbar?: HTMLDivElement) => HTMLElement } = {};
+  /**
+   * Raised after the locale changes.
+   *
+   * Parameters:
+   *
+   * - `sender`: `VisualizerBase`\
+   * The current `VisualizerBase` instance.
+   * - `options.locale`: `string`\
+   * The indentifier of a new locale (for example, `"en"`).
+   * @see locale
+   */
+  public onLocaleChanged = new Event<
+    (sender: VisualizerBase, options: { locale: string }) => any,
+    VisualizerBase,
+    any
+  >();
+
+  // public onStateChanged = new Event<
+  //   (sender: VisualizationPanel, state: IState) => any,
+  //   VisualizationPanel,
+  //   any
+  // >();
+  /**
+   * Raised when the visualizer [state](#state) changes.
+   *
+   * The state contains user-defined settings such as selected chart type, layout, sorting, filtering, and other runtime customizations. Handle this event to persist these customizations (for example, in `localStorage`) and restore them later.
+   *
+   * Parameters:
+   *
+   * - `sender`: `VisualizerBase`\
+   * The current `VisualizerBase` instance.
+   * - `state`: `any`\
+   * The new state of the visualizer.
+   *
+   * [View Demo](https://surveyjs.io/dashboard/examples/save-dashboard-state-to-local-storage/ (linkStyle))
+   */
+  public onStateChanged: Event<
+    (sender: VisualizerBase, options: any) => any,
+    VisualizerBase,
+    any
+  > = new Event<(sender: VisualizerBase, options: any) => any, VisualizerBase, any>();
+
+  protected stateChanged(name: string, value: any): void {
+    if(this._settingState) {
+      return;
+    }
+    this.onStateChanged.fire(this, this.getState());
+  }
+
+  protected toolbarItemCreators: ToolbarItemCreators = {};
+
+  public onGetToolbarItemCreators: () => ToolbarItemCreators;
+
+  protected sideBarItemCreators: SideBarItemCreators = {};
+
+  public onGetSideBarItemCreators: () => SideBarItemCreators;
+
+  protected _sidebarWidget: SidebarWidget | undefined;
+
+  protected getToolbarItemCreators(): ToolbarItemCreators {
+    const base = Object.assign({}, this.toolbarItemCreators, this.onGetToolbarItemCreators && this.onGetToolbarItemCreators() || {});
+
+    const hasSideBarItems = Object.keys(this.sideBarItemCreators).length > 0 ||
+      (this.onGetSideBarItemCreators && Object.keys(this.onGetSideBarItemCreators() || {}).length > 0);
+    if(hasSideBarItems) {
+      base["sidebarPanel"] = {
+        creator: (toolbar?: HTMLDivElement) => this.createSidebarPanelButton(toolbar),
+        type: "button",
+        index: 950,
+        groupIndex: 0,
+      };
+    }
+
+    return base;
+  }
+
+  protected createSidebarPanelButton(_toolbar?: HTMLDivElement): HTMLElement {
+    if(!this._sidebarWidget) {
+      const creators = Object.assign(
+        {},
+        this.sideBarItemCreators,
+        this.onGetSideBarItemCreators && this.onGetSideBarItemCreators() || {}
+      );
+      this._sidebarWidget = new SidebarWidget({
+        title: this.title,
+        itemCreators: creators,
+        buttonIcon: "settings_24x24",
+        buttonTitle: "Open panel",
+      });
+    }
+    return this._sidebarWidget.render(_toolbar);
+  }
+
+  public registerSideBarItem(
+    name: string,
+    creator: (container: HTMLDivElement) => HTMLElement,
+    index: number = 100,
+    groupIndex: number = 0
+  ): void {
+    this.sideBarItemCreators[name] = { creator, index, groupIndex };
+  }
+
+  public unregisterSideBarItem(name: string): ((container: HTMLDivElement) => HTMLElement) | undefined {
+    if(this.sideBarItemCreators[name] !== undefined) {
+      const item = this.sideBarItemCreators[name];
+      delete this.sideBarItemCreators[name];
+      return item.creator;
+    }
+    return undefined;
+  }
 
   constructor(
     public question: Question,
-    data: Array<{ [index: string]: any }>,
+    data: Array<{ [index: string]: any }> | GetDataFn,
     public options: { [index: string]: any } = {},
-    private _name?: string
+    private _type?: string
   ) {
+    const f = hasLicense;
+    this.haveCommercialLicense = (!!f && f(4)) ||
+      VisualizerBase.haveCommercialLicense ||
+      (typeof options.haveCommercialLicense !== "undefined" ? options.haveCommercialLicense : false);
+
+    this._getDataCore = this.questionOptions?.getDataCore;
     this._dataProvider = options.dataProvider || new DataProvider(data);
     this._dataProvider.onDataChanged.add(() => this.onDataChanged());
+    this.loadingData = !!this._dataProvider.dataFn;
 
-    if (typeof options.labelTruncateLength !== "undefined") {
-      this.labelTruncateLength = options.labelTruncateLengt;
+    if(typeof options.labelTruncateLength !== "undefined") {
+      this.labelTruncateLength = options.labelTruncateLength;
     }
   }
 
   protected get questionOptions() {
-    return this.options[this.question.name];
+    return this.options[this.question?.name];
   }
 
-  /**
-   * This method is called then data has been changed for some reason, e.g. filter was set.
-   * This method should be overriden if descendant computes own statistics or process data somehow.
-   */
-  protected onDataChanged() {
+  protected onDataChanged(): void {
+    this._calculationsCache = undefined;
+    this.loadingData = !!this._dataProvider.dataFn;
     this.refresh();
   }
 
-  /**
-   * Name of the data field of data object from the data array.
-   */
-  get dataName(): string | Array<string> {
-    return this.question.valueName || this.question.name;
+  protected getName(): string {
+    return this.question.name || this.question.valueName;
+  }
+
+  protected get allowChangeType() {
+    return this.options.allowChangeType
+      ?? this.questionOptions?.allowChangeType
+      ?? this.options.allowChangeVisualizerType
+      ?? this.questionOptions?.allowChangeVisualizerType
+      ?? true;
   }
 
   /**
-   * Indicates whether visualizer has header. Usually it is true then a question has correct answer.
+   * Returns the identifier of a visualized question.
+   * @hidefor Dashboard, VisualizationPanel
+   */
+  get name(): string {
+    return this.getName();
+  }
+
+  get dataNames(): Array<string> {
+    return [this.question.valueName || this.question.name];
+  }
+
+  get dataPath(): string {
+    return this.options.dataPath;
+  }
+
+  /**
+   * Indicates whether the visualizer renders a header. Returns `true` if the question defines a [`correctAnswer`](https://surveyjs.io/form-library/documentation/api-reference/question#correctAnswer).
+   * @see hasFooter
+   * @hidefor Dashboard, VisualizationPanel
    */
   get hasHeader(): boolean {
-    if (!this.options || !this.options.showCorrectAnswers) {
+    if(!this.options || !this.options.showCorrectAnswers) {
       return false;
     }
     return !!this.question && !!this.question.correctAnswer;
   }
 
   /**
-   * Indicates whether visualizer has footer. Usually it is true then a question has comment or choices question has other item.
+   * Indicates whether the visualizer renders a footer. Returns `true` if the question supports comments or an "Other" option.
+   * @see hasHeader
+   * @hidefor Dashboard, VisualizationPanel
    */
   get hasFooter(): boolean {
     return (
@@ -103,111 +349,204 @@ export class VisualizerBase implements IDataInfo {
     );
   }
 
-  protected createVisualizer<T = VisualizerBase>(question: Question): T {
-    let options = Object.assign({}, this.options);
-    if (options.dataProvider === undefined) {
-      options.dataProvider = this.dataProvider;
+  protected createVisualizer<T = VisualizerBase>(question: Question, options?: { [index: string]: any }, data?: any[]): T {
+    let visualizerOptions = Object.assign({}, options || this.options);
+    if(visualizerOptions.dataProvider === undefined) {
+      visualizerOptions.dataProvider = this.dataProvider;
     }
-    return VisualizerFactory.createVisualizer(question, this.data, options) as T;
+    return VisualizerFactory.createVisualizer(question, data || this.data, visualizerOptions) as T;
   }
 
   /**
-   * Footer visualizer getter.
+   * Returns the footer visualizer instance or `undefined` if the footer is not applicable.
+   * @see hasFooter
+   * @hidefor Dashboard, VisualizationPanel
    */
-  get footerVisualizer() {
-    if (!this.hasFooter) {
+  get footerVisualizer(): VisualizerBase {
+    if(!this.hasFooter) {
       return undefined;
     }
-    if (!this._footerVisualizer) {
+    if(!this._footerVisualizer) {
       const question = new QuestionCommentModel(
         this.question.name + (settings || {}).commentPrefix
       );
       question.title = this.processText(this.question.title);
 
-      this._footerVisualizer = this.createVisualizer(question);
-      this._footerVisualizer.onUpdate = () => this.invokeOnUpdate();
+      let visualizerOptions = Object.assign({}, this.options);
+      visualizerOptions.renderContent = undefined;
+      delete visualizerOptions.allowChangeVisualizerType;
+      this._footerVisualizer = this.createVisualizer(question, visualizerOptions);
+      if(!!this._footerVisualizer) {
+        this._footerVisualizer.onUpdate = () => this.invokeOnUpdate();
+      }
     }
     return this._footerVisualizer;
   }
 
   /**
-   * Indicates whether visualizer supports selection. Visualizers of questions with choices allow to select choice by clicking on the diagram bar and filter other data for the selected item.
+   * Indicates whether users can select chart elements to apply cross-filtering. Controlled by the [`allowSelection`](https://surveyjs.io/dashboard/documentation/api-reference/idashboardoptions#allowSelection) option passed to the Dashboard.
    */
   public get supportSelection(): boolean {
-    return (
-      (this.options.allowSelection === undefined ||
+    return (this.options.allowSelection === undefined ||
         this.options.allowSelection) &&
-      this._supportSelection
-    );
+      this._supportSelection;
   }
 
-  /**
-   * Series values getter. Some questions (used in matrices) should be grouped by matrix rows. This groups are called series.
-   */
-  getSeriesValues(): Array<string> {
+  public getSeriesValues(): Array<string> {
     return this.options.seriesValues || [];
   }
 
-  /**
-   * Series labels getter. Some questions (used in matrices) should be grouped by matrix rows. This groups are called series.
-   */
-  getSeriesLabels(): Array<string> {
+  public getSeriesLabels(): Array<string> {
     return this.options.seriesLabels || this.getSeriesValues();
   }
 
-  /**
-   * Available values of question answers (available choices).
-   */
-  getValues(): Array<any> {
+  public getValues(): Array<any> {
     throw new Error("Method not implemented.");
   }
 
-  /**
-   * Available labels of question answers (human readable representation of available choices).
-   */
-  getLabels(): Array<string> {
+  public getLabels(): Array<string> {
     return this.getValues();
   }
 
+  public getChartAdapter(): IChartAdapter {
+    return this._chartAdapter;
+  }
+
   /**
-   * Registers creator of visualizer toolbar item.
+   * Registers a function used to create a toolbar item for this visualizer.
+   *
+   * The following code shows how to add a custom button and drop-down menu to the toolbar:
+   *
+   * ```js
+   * import { VisualizationPanel, DocumentHelper } from "survey-analytics";
+   *
+   * const vizPanel = new VisualizationPanel( ... );
+   *
+   * // Add a custom button to the toolbar
+   * vizPanel.visualizers[0].registerToolbarItem("my-toolbar-button", () => {
+   *   return DocumentHelper.createButton(
+   *     // A button click event handler
+   *     () => {
+   *       alert("Custom toolbar button is clicked");
+   *     },
+   *     // Button caption
+   *     "Button"
+   *   );
+   * });
+   *
+   * // Add a custom drop-down menu to the toolbar
+   * vizPanel.visualizers[0].registerToolbarItem("my-toolbar-dropdown", () => {
+   *   return DocumentHelper.createSelector(
+   *     // Menu items
+   *     [
+   *       { value: 1, text: "One" },
+   *       { value: 2, text: "Two" },
+   *       { value: 3, text: "Three" }
+   *     ],
+   *     // A function that specifies initial selection
+   *     (option) => false,
+   *     // An event handler that is executed when selection is changed
+   *     (e) => {
+   *       alert(e.target.value);
+   *     }
+   *   );
+   * });
+   * ```
+   * @param name A custom name for the toolbar item.
+   * @param creator A function that accepts the toolbar and should return an `HTMLElement` with the toolbar item.
+   * @see unregisterToolbarItem
+   * @hidefor Dashboard
    */
   public registerToolbarItem(
     name: string,
-    creator: (toolbar?: HTMLDivElement) => HTMLElement
-  ) {
-    this.toolbarItemCreators[name] = creator;
+    creator: (toolbar?: HTMLDivElement) => HTMLElement,
+    type: ToolbarItemType,
+    index: number = 100,
+    groupIndex: number = 0
+  ): void {
+    this.toolbarItemCreators[name] = { creator, type, index, groupIndex };
   }
 
   /**
-   * The name of the visaulizer.
+   *
+   * Unregisters a function used to create a toolbar item. Allows you to remove a toolbar item.
+   * @param name A toolbar item name.
+   * @returns A function previously used to [register](#registerToolbarItem) the removed toolbar item.
+   * @see registerToolbarItem
+   * @hidefor Dashboard
    */
-  public get name() {
-    return this._name || "visualizer";
+  public unregisterToolbarItem(
+    name: string
+  ): (toolbar?: HTMLDivElement) => HTMLElement {
+    if(this.toolbarItemCreators[name] !== undefined) {
+      const item = this.toolbarItemCreators[name];
+      delete this.toolbarItemCreators[name];
+      return item.creator;
+    }
+    return undefined;
   }
 
   /**
-   * The actual data of the visaulizer.
+   * Returns the visualizer's title.
+   * @since 2.3.8
+   * @hidefor Dashboard, VisualizationPanel
+   */
+  public get title(): string {
+    return this.getTitle(this.question);
+  }
+
+  protected getTitle(question: Question): string {
+    if(question === undefined) return "";
+    return this.processText(question.locTitle?.renderedHtml ? question.locTitle.renderedHtml : question.title);
+  }
+
+  /**
+   * Returns the visualizer's type identifier.
+   * @hidefor Dashboard, VisualizationPanel
+   */
+  public get type(): string {
+    return this._type || "visualizer";
+  }
+
+  public get dataType(): string {
+    if(this.question) {
+      if(typeof this.question.getType == "function") {
+        return this.question.getType();
+      } else if("dataType" in this.question) {
+        return this.question["dataType"];
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * @deprecated Use the [`surveyData`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel#surveyData) property instead.
+   * @hidden
    */
   protected get data() {
     return this.dataProvider.filteredData;
   }
 
   /**
-   * The data provider is used by the visaulizer.
+   * Returns an array of survey result objects used to calculate values for visualization. If a user applies a filter, the array is also filtered.
+   *
+   * To obtain calculated values, call [`getCalculatedValues()`](#getCalculatedValues).
    */
+  protected get surveyData() {
+    return this.dataProvider.filteredData;
+  }
+
   protected get dataProvider(): DataProvider {
     return this._dataProvider;
   }
 
   /**
-   * Updates visualizer data.
+   * Updates the visualized data.
+   * @param data An array of survey result objects or a data-loading function.
    */
-  updateData(data: Array<{ [index: string]: any }>) {
-    if (!this.options.dataProvider) {
-      this.dataProvider.data = data;
-    }
-    if (this.hasFooter) {
+  updateData(data: Array<{ [index: string]: any }> | GetDataFn) {
+    this.dataProvider.data = data;
+    if(this.hasFooter) {
       this.footerVisualizer.updateData(data);
     }
   }
@@ -219,18 +558,22 @@ export class VisualizerBase implements IDataInfo {
   }
 
   /**
-   * Destroys visualizer.
+   * Deletes the visualizer and removes its DOM elements.
+   * @see clear
    */
   destroy() {
-    if (!!this.renderResult) {
+    if(!!this.renderResult) {
       this.clear();
       this.toolbarContainer = undefined;
+      this.headerContainer = undefined;
       this.contentContainer = undefined;
       this.footerContainer = undefined;
+      this.bannerContainer = undefined;
+      this.wrapperContainer = undefined;
       this.renderResult.innerHTML = "";
       this.renderResult = undefined;
     }
-    if (!!this._footerVisualizer) {
+    if(!!this._footerVisualizer) {
       this._footerVisualizer.destroy();
       this._footerVisualizer.onUpdate = undefined;
       this._footerVisualizer = undefined;
@@ -238,24 +581,88 @@ export class VisualizerBase implements IDataInfo {
   }
 
   /**
-   * Method for clearing all rendered elements from outside.
+   * Clears the toolbar, header, content, and footer containers and removes the license banner and visualizer wrapper from the root.
+   *
+   * Does not remove the visualizer root element from the DOM. Use [`destroy()`](#destroy) to fully dispose of the visualizer.
    */
   public clear() {
-    if (!!this.toolbarContainer) {
+    if(!!this.toolbarContainer) {
       this.destroyToolbar(this.toolbarContainer);
     }
-    if (!!this.contentContainer) {
+    if(!!this.headerContainer) {
+      this.destroyHeader(this.headerContainer);
+    }
+    if(!!this.contentContainer) {
       this.destroyContent(this.contentContainer);
     }
-    if (!!this.footerContainer) {
+    if(!!this.footerContainer) {
       this.destroyFooter(this.footerContainer);
+    }
+    this.removeFromParent(this.bannerContainer);
+    this.bannerContainer = undefined;
+    this.removeFromParent(this.wrapperContainer);
+    this.wrapperContainer = undefined;
+  }
+
+  protected removeFromParent(element: HTMLElement): void {
+    if(!!element && !!element.parentNode) {
+      element.parentNode.removeChild(element);
     }
   }
 
+  protected attachBanner(container: HTMLElement, banner: HTMLElement): void {
+    this.bannerContainer = banner;
+    container.appendChild(banner);
+  }
+
+  public getSortedToolbarItemCreators(): Array<any> {
+    const toolbarItemCreators = this.getToolbarItemCreators();
+
+    const groupedItems: { [type: string]: Array<{ name: string, creator: (toolbar?: HTMLDivElement) => HTMLElement, type: ToolbarItemType, index: number, groupIndex: number }> } = {};
+
+    Object.keys(toolbarItemCreators).forEach((toolbarItemName) => {
+      const item = toolbarItemCreators[toolbarItemName];
+      const type = item.type;
+
+      if(!groupedItems[type]) {
+        groupedItems[type] = [];
+      }
+
+      groupedItems[type].push({
+        name: toolbarItemName,
+        ...item
+      });
+    });
+
+    Object.keys(groupedItems).forEach((type) => {
+      groupedItems[type].sort((a, b) => {
+        const indexA = a.index || 0;
+        const indexB = b.index || 0;
+        return indexA - indexB;
+      });
+    });
+
+    const sortedItems: Array<{ name: string, creator: (toolbar?: HTMLDivElement) => HTMLElement, type: ToolbarItemType, index: number, groupIndex: number }> = [];
+
+    const sortedGroups = Object.keys(groupedItems).sort((typeA, typeB) => {
+      const groupA = groupedItems[typeA][0]?.groupIndex || 0;
+      const groupB = groupedItems[typeB][0]?.groupIndex || 0;
+      return groupA - groupB;
+    });
+
+    sortedGroups.forEach((type) => {
+      sortedItems.push(...groupedItems[type]);
+    });
+
+    return sortedItems;
+  }
+
   protected createToolbarItems(toolbar: HTMLDivElement) {
-    Object.keys(this.toolbarItemCreators || {}).forEach((toolbarItemName) => {
-      let toolbarItem = this.toolbarItemCreators[toolbarItemName](toolbar);
-      if (!!toolbarItem) {
+    const toolbarItemCreators = this.getSortedToolbarItemCreators();
+
+    toolbarItemCreators.forEach((item) => {
+      let toolbarItem = item.creator(toolbar);
+      if(!!toolbarItem) {
         toolbar.appendChild(toolbarItem);
       }
     });
@@ -265,56 +672,51 @@ export class VisualizerBase implements IDataInfo {
     return !!this.question ? this.question.correctAnswer : "";
   }
 
-  /**
-   * Destroys visualizer toolbar.
-   */
+  public resetContentFilter(): void { }
+
+  protected renderBanner(container: HTMLElement) { }
+
   protected destroyToolbar(container: HTMLElement) {
+    if(this._sidebarWidget) {
+      this._sidebarWidget.destroy();
+      this._sidebarWidget = undefined;
+    }
     container.innerHTML = "";
   }
 
-  /**
-   * Renderss visualizer toolbar.
-   */
   protected renderToolbar(container: HTMLElement) {
-    if (this.showHeader) {
+    if(this.showToolbar) {
       const toolbar = <HTMLDivElement>(
         DocumentHelper.createElement("div", "sa-toolbar")
       );
       this.createToolbarItems(toolbar);
-      container.appendChild(toolbar);
+
+      if(!!toolbar && !!toolbar.innerHTML) {
+        container.appendChild(toolbar);
+        container.classList.add("sa-toolbar--has-content");
+      }
     }
   }
 
-  /**
-   * Destroys visualizer header.
-   * Usually overriden in descendants.
-   */
   protected destroyHeader(container: HTMLElement) {
-    if (!!this.options && typeof this.options.destroyHeader === "function") {
+    if(!!this.options && typeof this.options.destroyHeader === "function") {
       this.options.destroyHeader(container, this);
     } else {
       container.innerHTML = "";
     }
   }
 
-  /**
-   * Destroys visualizer content.
-   * Usually overriden in descendants.
-   */
   protected destroyContent(container: HTMLElement) {
-    if (!!this.options && typeof this.options.destroyContent === "function") {
+    if(!!this.options && typeof this.options.destroyContent === "function") {
       this.options.destroyContent(container, this);
-    } else {
-      container.innerHTML = "";
+    } else if(this.getChartAdapter()) {
+      this.getChartAdapter().destroy(<HTMLElement>container.children[0]);
     }
+    container.innerHTML = "";
   }
 
-  /**
-   * Renders visualizer header.
-   * Usually overriden in descendants.
-   */
   protected renderHeader(container: HTMLElement) {
-    if (!!this.options && typeof this.options.renderHeader === "function") {
+    if(!!this.options && typeof this.options.renderHeader === "function") {
       this.options.renderHeader(container, this);
     } else {
       const correctAnswerElement = DocumentHelper.createElement(
@@ -326,32 +728,60 @@ export class VisualizerBase implements IDataInfo {
     }
   }
 
-  /**
-   * Renders visualizer content.
-   * Usually overriden in descendants.
-   */
-  protected renderContent(container: HTMLElement) {
-    if (!!this.options && typeof this.options.renderContent === "function") {
-      this.options.renderContent(container, this);
+  protected async renderContentAsync(container: HTMLElement): Promise<HTMLElement> {
+    if(this._chartAdapter) {
+      const chartNode: HTMLElement = DocumentHelper.createElement("div");
+      container.innerHTML = "";
+      container.appendChild(chartNode);
+      await this._chartAdapter.create(chartNode);
     } else {
       container.innerText = localization.getString("noVisualizerForQuestion");
     }
-    this.afterRender(container);
+    return container;
   }
 
-  /**
-   * Destroys visualizer footer.
-   */
+  protected ensureQuestionIsReady(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if(this.question) {
+        this.question.waitForQuestionIsReady().then(() => resolve());
+      } else {
+        resolve();
+      }
+    });
+  }
+
+  protected renderContent(container: HTMLElement): void {
+    if(!!this.options && typeof this.options.renderContent === "function") {
+      const rendered = this.options.renderContent(container, this);
+      if(rendered !== false) {
+        this.afterRender(container);
+      }
+    } else {
+      if(this.loadingData) {
+        this.renderLoadingIndicator(this.contentContainer);
+      }
+      this.ensureQuestionIsReady().then(() => this.renderContentAsync(container).then(el => this.afterRender(el)));
+    }
+  }
+
   protected destroyFooter(container: HTMLElement) {
     container.innerHTML = "";
   }
 
-  /**
-   * Renders visualizer footer.
-   */
+  public get isFooterCollapsed(): boolean {
+    if(this._footerIsCollapsed === undefined) {
+      this._footerIsCollapsed = VisualizerBase.otherCommentCollapsed;
+    }
+    return this._footerIsCollapsed;
+  }
+  public set isFooterCollapsed(newVal: boolean) {
+    this._footerIsCollapsed = newVal;
+  }
+
   protected renderFooter(container: HTMLElement) {
     container.innerHTML = "";
-    if (this.hasFooter) {
+    if(this.hasFooter) {
+      container.classList.add("sa-visualizer__footer--has-content");
       const footerTitleElement = DocumentHelper.createElement(
         "h4",
         "sa-visualizer__footer-title",
@@ -363,52 +793,71 @@ export class VisualizerBase implements IDataInfo {
         "div",
         "sa-visualizer__footer-content"
       );
-      footerContentElement.style.display = VisualizerBase.otherCommentCollapsed
-        ? "none"
-        : "block";
+      footerContentElement.style.display = this.isFooterCollapsed ? "none" : "block";
+      const visibilityButtonText = localization.getString(this.isFooterCollapsed ? "showButton" : "hideButton");
 
       const visibilityButton = DocumentHelper.createButton(() => {
-        if (footerContentElement.style.display === "none") {
+        if(footerContentElement.style.display === "none") {
           footerContentElement.style.display = "block";
-          visibilityButton.innerText = localization.getString("hideButton");
+          (visibilityButton as any).setText(localization.getString("hideButton"));
+          this._footerIsCollapsed = false;
         } else {
           footerContentElement.style.display = "none";
-          visibilityButton.innerText = localization.getString(
-            VisualizerBase.otherCommentCollapsed ? "showButton" : "hideButton"
-          );
+          (visibilityButton as any).setText(localization.getString("showButton"));
+          this._footerIsCollapsed = true;
         }
         this.footerVisualizer.invokeOnUpdate();
-      }, localization.getString("showButton") /*, "sa-toolbar__button--right"*/);
+      }, visibilityButtonText /*, "sa-toolbar__button--right"*/);
       container.appendChild(visibilityButton);
 
       container.appendChild(footerContentElement);
 
-      this.footerVisualizer.render(footerContentElement);
+      this.footerVisualizer.render(footerContentElement, false);
+    } else {
+      container.classList.remove("sa-visualizer__footer--has-content");
     }
   }
 
   /**
-   * Renders visualizer in the given container.
+   * Renders the visualizer inside a specified container.
+   * @param targetElement An `HTMLElement` or the `id` of a DOM element.
    */
-  render(targetElement: HTMLElement | string) {
-    if (typeof targetElement === "string") {
+  render(targetElement: HTMLElement | string, isRoot = true) {
+    if(typeof targetElement === "string") {
       targetElement = document.getElementById(targetElement);
     }
     this.renderResult = targetElement;
+    if(isRoot && !this._appliedTheme) {
+      this._appliedTheme = this.theme;
+      this.onThemeChanged();
+    }
+    if(this._appliedTheme) {
+      this._appliedTheme.applyThemeToElement(this.renderResult);
+    }
 
+    this.renderBanner(targetElement);
+
+    let container = targetElement;
+    if(isRoot) {
+      this.wrapperContainer = DocumentHelper.createElement("div", "sa-visualizer-wrapper");
+      targetElement.appendChild(this.wrapperContainer);
+      container = this.wrapperContainer;
+    } else {
+      container.className = "sa-visualizer";
+    }
     this.toolbarContainer = DocumentHelper.createElement(
       "div",
       "sa-visualizer__toolbar"
     );
-    targetElement.appendChild(this.toolbarContainer);
+    container.appendChild(this.toolbarContainer);
     this.renderToolbar(this.toolbarContainer);
 
-    if (this.hasHeader) {
+    if(this.hasHeader) {
       this.headerContainer = DocumentHelper.createElement(
         "div",
         "sa-visualizer__header"
       );
-      targetElement.appendChild(this.headerContainer);
+      container.appendChild(this.headerContainer);
       this.renderHeader(this.headerContainer);
     }
 
@@ -416,37 +865,66 @@ export class VisualizerBase implements IDataInfo {
       "div",
       "sa-visualizer__content"
     );
-    targetElement.appendChild(this.contentContainer);
+    this.contentContainer.role = "presentation";
+    container.appendChild(this.contentContainer);
     this.renderContent(this.contentContainer);
 
     this.footerContainer = DocumentHelper.createElement(
       "div",
       "sa-visualizer__footer"
     );
-    targetElement.appendChild(this.footerContainer);
+    container.appendChild(this.footerContainer);
     this.renderFooter(this.footerContainer);
   }
 
+  public updateToolbar(): void {
+    if(!!this.toolbarContainer) {
+      PostponeHelper.postpone(() => {
+        this.destroyToolbar(this.toolbarContainer);
+        this.renderToolbar(this.toolbarContainer);
+      });
+    }
+  }
+
+  protected isSupportSoftUpdateContent(): boolean {
+    return false;
+  }
+
+  protected softUpdateContent(): void {
+  }
+
+  protected hardUpdateContent(): void {
+    this.destroyContent(this.contentContainer);
+    this.renderContent(this.contentContainer);
+  }
+
+  public updateContent(): void {
+    if(!this.isSupportSoftUpdateContent()) {
+      this.hardUpdateContent();
+    } else {
+      this.softUpdateContent();
+    }
+  }
+
   /**
-   * Redraws visualizer and all inner content.
+   * Redraws the visualizer and its content.
    */
-  public refresh() {
-    if (!!this.headerContainer) {
-      setTimeout(() => {
+  public refresh(): void {
+    if(!!this.headerContainer) {
+      PostponeHelper.postpone(() => {
         this.destroyHeader(this.headerContainer);
         this.renderHeader(this.headerContainer);
         this.invokeOnUpdate();
       });
     }
-    if (!!this.contentContainer) {
-      setTimeout(() => {
-        this.destroyContent(this.contentContainer);
-        this.renderContent(this.contentContainer);
+    if(!!this.contentContainer) {
+      PostponeHelper.postpone(() => {
+        this.updateContent();
         this.invokeOnUpdate();
       });
     }
-    if (!!this.footerContainer) {
-      setTimeout(() => {
+    if(!!this.footerContainer) {
+      PostponeHelper.postpone(() => {
         this.destroyFooter(this.footerContainer);
         this.renderFooter(this.footerContainer);
         this.invokeOnUpdate();
@@ -454,8 +932,19 @@ export class VisualizerBase implements IDataInfo {
     }
   }
 
+  public refreshContent(): void {
+    if(this._settingState) {
+      return;
+    }
+    if(!!this.contentContainer) {
+      this.destroyContent(this.contentContainer);
+      this.renderContent(this.contentContainer);
+    }
+    this.invokeOnUpdate();
+  }
+
   protected processText(text: string): string {
-    if (this.options.stripHtmlFromTitles !== false) {
+    if(this.options.stripHtmlFromTitles !== false) {
       let originalText = text || "";
       let processedText = originalText.replace(/(<([^>]+)>)/gi, "");
       return processedText;
@@ -468,56 +957,68 @@ export class VisualizerBase implements IDataInfo {
     return colors[Math.floor(Math.random() * colors.length)];
   }
 
-  private _backgroundColor = "#f7f7f7";
+  private _backgroundColor;
 
   get backgroundColor() { return this.getBackgroundColorCore(); }
   set backgroundColor(value) { this.setBackgroundColorCore(value); }
 
   protected getBackgroundColorCore() {
-    return this._backgroundColor;
+    return this._backgroundColor || this._theme.backgroundColor;
   }
   protected setBackgroundColorCore(color: string) {
     this._backgroundColor = color;
-    if (this.footerVisualizer) this.footerVisualizer.backgroundColor = color;
+    if(this.footerVisualizer)this.footerVisualizer.backgroundColor = color;
   }
 
-  static customColors: string[] = [];
-  private static colors = [
-    "#86e1fb",
-    "#3999fb",
-    "#ff6771",
-    "#1eb496",
-    "#ffc152",
-    "#aba1ff",
-    "#7d8da5",
-    "#4ec46c",
-    "#cf37a6",
-    "#4e6198",
-  ];
-
-  getColors(count = 10) {
-    const colors =
-      Array.isArray(VisualizerBase.customColors) &&
-        VisualizerBase.customColors.length > 0
-        ? VisualizerBase.customColors
-        : VisualizerBase.colors;
-
-    let manyColors: any = [];
-
-    for (let index = 0; index < count; index++) {
-      manyColors = manyColors.concat(colors);
+  protected onThemeChanged(): void {
+    if(this.footerVisualizer) {
+      this.footerVisualizer.theme = this.theme;
     }
-
-    return manyColors;
   }
 
-  get showHeader() {
-    return this._showHeader;
+  get theme() : DashboardTheme {
+    return this._theme;
   }
-  set showHeader(newValue: boolean) {
-    if (newValue != this._showHeader) {
-      this._showHeader = newValue;
-      if (!!this.toolbarContainer) {
+  set theme(theme: DashboardTheme) {
+    this._theme = theme;
+    this._appliedTheme = undefined;
+    this.onThemeChanged();
+  }
+
+  /**
+   * Applies a theme to the Dashboard.
+   * @param theme An [`ITheme`](https://surveyjs.io/form-library/documentation/api-reference/itheme) object with theme settings.
+   * @param baseTheme An optional [`ITheme`](https://surveyjs.io/form-library/documentation/api-reference/itheme) object used as the base theme. When specified, it is deep-merged with `theme`, and the merged result is applied.
+   * @since 3.0.0
+   */
+  public applyTheme(theme: ITheme, baseTheme?: ITheme): void {
+    if(!theme && !baseTheme) return;
+    const themeToApply = baseTheme ? mergeObjects({}, baseTheme, theme) : theme;
+    this.theme.setTheme(themeToApply);
+    this._appliedTheme = this.theme;
+    if(this.renderResult) {
+      this._appliedTheme.applyThemeToElement(this.renderResult);
+    }
+    this.onThemeChanged();
+    this.refreshContent();
+  }
+
+  getColors() {
+    return this.theme.chartColors;
+  }
+
+  /**
+   * Gets or sets whether the toolbar is visible.
+   *
+   * Default value: `true`
+   */
+  get showToolbar() {
+    return this._showToolbar;
+  }
+  set showToolbar(newValue: boolean) {
+    if(newValue != this._showToolbar) {
+      this._showToolbar = newValue;
+      if(!!this.toolbarContainer) {
         this.destroyToolbar(this.toolbarContainer);
         this.renderToolbar(this.toolbarContainer);
       }
@@ -525,15 +1026,192 @@ export class VisualizerBase implements IDataInfo {
   }
 
   /**
-   * Returns data to be used in the visualizer.
+   * @deprecated Use the [`getCalculatedValues()`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel#getCalculatedValues) method instead.
+   * @hidden
    */
   getData(): any {
-    return this.dataProvider.getData(this);
+    return this.getCalculatedValuesCore();
   }
 
-  public getState(): any {
+  private _calculationsCache: ICalculationResult = undefined;
+
+  protected getCalculatedValuesCore(): ICalculationResult {
+    if(!!this._getDataCore) {
+      return this._getDataCore(this);
+    }
+
+    return defaultStatisticsCalculator(this.surveyData, this);
+  }
+
+  protected loadingData: boolean = false;
+
+  public renderLoadingIndicator(contentContainer: HTMLElement): void {
+    contentContainer.appendChild(createLoadingIndicator());
+  }
+
+  public convertFromExternalData(externalCalculatedData: any): ICalculationResult {
+    return externalCalculatedData;
+  }
+
+  public async getAnswersData(): Promise<IAnswersData> {
+    const calculatedValues = await this.getCalculatedValues();
+    return {
+      datasets: calculatedValues.data,
+      // TODO: remove unused or add missing values
+      values: calculatedValues.values || this.getValues(),
+      labels: this.getLabels(),
+      colors: this.getColors(),
+      texts: calculatedValues.data,
+      seriesLabels: calculatedValues.series || this.getSeriesLabels()
+    };
+  }
+
+  /**
+   * Returns calculated values used for visualization. If a user applies a filter, the array is also filtered.
+   *
+   * To access an array of source survey results, use the [`surveyData`](#surveyData) property.
+   */
+  public getCalculatedValues(): Promise<ICalculationResult> {
+    return new Promise<ICalculationResult>((resolve, reject) => {
+      if(this._calculationsCache !== undefined) {
+        resolve(this._calculationsCache);
+      }
+      if(!!this.dataProvider.dataFn) {
+        this.loadingData = true;
+        const dataLoadingPromise = this.dataProvider.dataFn({
+          visualizer: this,
+          filter: this.dataProvider.getAllFilters(),
+          callback: (loadedData: { data: Array<Object>, error?: any }) => {
+            this.loadingData = false;
+            if(!loadedData.error && Array.isArray(loadedData.data)) {
+              this._calculationsCache = this.convertFromExternalData(loadedData.data);
+              resolve(this._calculationsCache);
+            } else {
+              reject();
+            }
+          }
+        });
+        if(dataLoadingPromise) {
+          dataLoadingPromise
+            .then(calculatedData => {
+              this.loadingData = false;
+              this._calculationsCache = this.convertFromExternalData(calculatedData);
+              resolve(this._calculationsCache);
+            })
+            .catch(() => {
+              this.loadingData = false;
+              reject();
+            });
+        }
+      } else {
+        this._calculationsCache = this.getCalculatedValuesCore();
+        resolve(this._calculationsCache);
+      }
+    });
+  }
+
+  protected _settingState = false;
+
+  protected _defaultStateValue = undefined;
+
+  public getDefaultState(): any {
     return {};
   }
-  public setState(state: any): void {
+
+  /**
+   * Returns an object with properties that describe the current visualizer state. The properties are different for each individual visualizer.
+   *
+   * > This method is overriden in classes descendant from `VisualizerBase`.
+   * @see setState
+   * @see resetState
+   * @see onStateChanged
+   * @hidefor Dashboard, VisualizationPanel
+   */
+  public getState(): any {
+    const state: any = {};
+    const defaultState = this.getDefaultState();
+    Object.keys(defaultState).forEach(propertyName => {
+      state[propertyName] = (<any>this)[propertyName];
+    });
+    return getDiffsFromDefaults(state, defaultState);
   }
+
+  protected setStateCore(state: any): void {
+    Object.keys(this.getDefaultState()).forEach(propertyName => {
+      if(state[propertyName] !== undefined) {
+        (<any>this)[propertyName] = state[propertyName];
+      }
+    });
+  }
+
+  /**
+   * Sets the visualizer state.
+   *
+   * [View Demo](https://surveyjs.io/dashboard/examples/save-dashboard-state-to-local-storage/ (linkStyle))
+   *
+   * > This method is overriden in classes descendant from `VisualizerBase`.
+   * @see getState
+   * @see resetState
+   * @see onStateChanged
+   * @hidefor Dashboard, VisualizationPanel
+   */
+  public setState(state: any): void {
+    if(this._settingState) return;
+    this._settingState = true;
+    try {
+      this.setStateCore(state);
+    } finally {
+      this._settingState = false;
+    }
+    this.refreshContent();
+  }
+
+  /**
+   * Resets the visualizer state.
+   *
+   * > This method is overriden in classes descendant from `VisualizerBase`.
+   * @see getState
+   * @see setState
+   * @see onStateChanged
+   * @since 2.3.5
+   * @hidefor Dashboard, VisualizationPanel
+   */
+  public resetState(): void {
+    this.setState(this.getDefaultState());
+  }
+
+  /**
+   * Gets or sets the current locale.
+   *
+   * If you want to inherit the locale from a visualized survey, assign a [`SurveyModel`](https://surveyjs.io/form-library/documentation/api-reference/survey-data-model) instance to the [`survey`](https://surveyjs.io/dashboard/documentation/api-reference/idashboardoptions#survey) option passed to the Dashboard.
+   *
+   * If the survey is [translated into more than one language](https://surveyjs.io/form-library/examples/survey-localization/), the dashboard toolbar displays a language selection drop-down menu.
+   *
+   * [View Demo](https://surveyjs.io/dashboard/examples/localize-survey-data-dashboard-ui/ (linkStyle))
+   * @see onLocaleChanged
+   */
+  public get locale(): string {
+    var survey = this.options.survey;
+    if(!!survey) {
+      return survey.locale;
+    }
+    return localization.currentLocale;
+  }
+
+  public set locale(newLocale: string) {
+    this.setLocale(newLocale);
+    this.onLocaleChanged.fire(this, { locale: newLocale });
+    this.refresh();
+  }
+
+  protected setLocale(newLocale: string): void {
+    localization.currentLocale = newLocale;
+    var survey = this.options.survey;
+    if(!!survey && survey.locale !== newLocale) {
+      survey.locale = newLocale;
+    }
+  }
+
 }
+
+VisualizationManager.defaultVisualizer = VisualizerBase;

@@ -1,7 +1,8 @@
-import { Base, ItemValue, MatrixRowModel, Question, QuestionCompositeModel, QuestionCustomModel, QuestionFileModel, QuestionMatrixDropdownModel, QuestionMatrixModel, settings } from "survey-core";
-import { createImagesContainer, createLinksContainer } from "../utils";
+import { ItemValue, MatrixRowModel, Question, QuestionCheckboxModel, QuestionCompositeModel, QuestionCustomModel, QuestionDropdownModel, QuestionFileModel, QuestionMatrixDropdownModel, QuestionMatrixDynamicModel, QuestionMatrixModel, QuestionPanelDynamicModel, QuestionRadiogroupModel, QuestionSelectBase, QuestionTagboxModel, settings } from "survey-core";
+import { createImagesContainer, createLinksContainer, stripHtml } from "../utils";
 import { ICellData, IColumn, ColumnDataType, QuestionLocation, IColumnData } from "./config";
-import { ITableOptions, Table } from "./table";
+import { ITableOptions, ITable } from "./table-interfaces";
+
 export class BaseColumn<T extends Question = Question> implements IColumn {
   dataType: ColumnDataType;
   isVisible: boolean = true;
@@ -12,10 +13,26 @@ export class BaseColumn<T extends Question = Question> implements IColumn {
   isComment?: boolean;
   private nameValue: string;
   private displayNameValue?: string;
+  private parentQuestions: Question[] = [];
 
-  constructor(protected question: T, protected table: Table) {
+  constructor(protected question: T, protected table: ITable) {
     this.dataType = this.getDataType();
+    this.updateWhenQuestionIsReady(question, table);
   }
+
+  protected updateWhenQuestionIsReady(question: Question, table: ITable) {
+    if(!question || question.isReady) return;
+    question.waitForQuestionIsReady().then(() => {
+      if(!table.isInitialized) return;
+      try {
+        table.lockStateChanged();
+        table.refresh(!table.isInitTableDataProcessing);
+      } finally {
+        table.unlockStateChanged();
+      }
+    });
+  }
+
   get name(): string {
     if(!this.nameValue) {
       this.name = this.getName();
@@ -27,18 +44,39 @@ export class BaseColumn<T extends Question = Question> implements IColumn {
   }
   get displayName(): string {
     if(!this.displayNameValue) {
-      this.displayName = this.getDisplayName();
+      this.displayName = this.getDisplayNamePrefix() + this.getDisplayName();
     }
-    return this.displayNameValue;
+    return this.processText(this.displayNameValue);
   }
   public set displayName(val: string) {
     this.displayNameValue = val;
   }
 
-  protected getDisplayName(): string {
+  // prefixes must be re-computed on locale change, so parent questions are stored instead of a baked-in title string
+  public addParentQuestion(parentQuestion: Question): void {
+    this.parentQuestions.unshift(parentQuestion);
+    this.displayNameValue = undefined;
+  }
+  protected getDisplayNamePrefix(): string {
+    return this.parentQuestions.map(q => this.getQuestionDisplayName(q) + " - ").join("");
+  }
+
+  // question titles may contain user-defined HTML which must not reach table headers or tooltips
+  protected processText(text: string): string {
+    const options = this.table.options;
+    if(!options || options.stripHtmlFromTitles !== false) {
+      return stripHtml(text);
+    }
+    return text;
+  }
+
+  protected getQuestionDisplayName(question: Question): string {
     return this.table.useNamesAsTitles
-      ? this.question.name
-      : (this.question.title || "").trim() || this.question.name;
+      ? question.name
+      : (question.locTitle?.renderedHtml || question.title || "").trim() || question.name;
+  }
+  protected getDisplayName(): string {
+    return this.getQuestionDisplayName(this.question);
   }
   protected getName(): string {
     return this.question.name;
@@ -50,24 +88,12 @@ export class BaseColumn<T extends Question = Question> implements IColumn {
     return data[this.name];
   }
 
-  protected setupReadyChangedCallback(table: Table, question: Question) {
-    const onReadyChangedCallback = (sender, options) => {
-      if(options.isReady) {
-        table.refresh(true);
-        sender.onReadyChanged.remove(onReadyChangedCallback);
-      }
-    };
-    if(!question.isReady) {
-      question.onReadyChanged.add(onReadyChangedCallback);
-    }
-  }
-
-  protected getDisplayValue(data: any, table: Table, options: ITableOptions): any {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): any {
     let displayValue = this.getDisplayValueCore(data);
     const question = this.question;
 
-    if (!!question) {
-      if (options.useValuesAsLabels) {
+    if(!!question) {
+      if(options.useValuesAsLabels) {
         displayValue = question.value;
       } else {
         displayValue = question.displayValue;
@@ -81,9 +107,8 @@ export class BaseColumn<T extends Question = Question> implements IColumn {
       : JSON.stringify(displayValue) || "";
   }
 
-  public getCellData(table: Table, data: any): ICellData {
+  public getCellData(table: ITable, data: any): ICellData {
     const displayValue = this.getDisplayValue(data, table, table.options);
-    this.setupReadyChangedCallback(table, this.question);
     return { question: this.question, displayValue: this.formatDisplayValue(displayValue) };
   }
   public toJSON(): IColumnData {
@@ -104,29 +129,106 @@ export class BaseColumn<T extends Question = Question> implements IColumn {
 }
 
 export class DefaultColumn extends BaseColumn {
-  protected getDisplayValue(data: any, table: Table, options: ITableOptions): any {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): any {
     return this.getDisplayValueCore(data);
   }
 }
 
-export class CommentColumn extends BaseColumn {
+export class SelectBaseColumn<T extends QuestionSelectBase> extends BaseColumn<T> {
+  protected get isOtherInSeparateColumn() {
+    return this.question.hasOther && this.question.getStoreOthersAsComment();
+  }
+  protected getItemDisplayText(item: ItemValue, options: ITableOptions): string {
+    return options.useValuesAsLabels ? item.value : item.textOrHtml;
+  }
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): string {
+    const prevSeparator = settings.choicesSeparator;
+    settings.choicesSeparator = table.itemsDelimiter;
+    const value = options.useValuesAsLabels ? this.question.renderedValue : this.question.displayValue;
+    settings.choicesSeparator = prevSeparator;
+    return value;
+  }
+}
+
+export class CheckboxColumn extends SelectBaseColumn<QuestionCheckboxModel | QuestionTagboxModel> {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): string {
+    if(this.isOtherInSeparateColumn) {
+      const selectedItems = this.question.selectedItems;
+      const res: Array<string> = selectedItems.map(item => this.getItemDisplayText(item, options));
+      return res.join(table.itemsDelimiter);
+    }
+    return super.getDisplayValue(data, table, options);
+  }
+}
+
+export class FlattenedCheckboxColumn extends BaseColumn<QuestionCheckboxModel | QuestionTagboxModel> {
+  constructor(question: QuestionCheckboxModel | QuestionTagboxModel, private choiceValue: any, private choiceText: string, table: ITable) {
+    super(question, table);
+  }
+
+  protected getDataType(): ColumnDataType {
+    return ColumnDataType.Html;
+  }
+
+  protected getName(): string {
+    return `${this.question.name}.${this.choiceValue}`;
+  }
+
+  protected getDisplayName(): string {
+    const questionDisplayName = this.table.useNamesAsTitles
+      ? this.question.name
+      : (this.question.locTitle?.renderedHtml || this.question.title || "").trim() || this.question.name;
+    const choiceDisplayText = this.table.useNamesAsTitles ? this.choiceValue : this.choiceText;
+    return `${questionDisplayName} - ${choiceDisplayText}`;
+  }
+
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): any {
+    const questionValue = data[this.question.name];
+    if(!Array.isArray(questionValue)) {
+      return "";
+    }
+    const index = questionValue.indexOf(this.choiceValue);
+    if(index < 0) {
+      return "";
+    }
+    // Default to checkmark if not specified
+    const displayMode = options.multiSelectColumnValueFormat || "checkmark";
+    return displayMode === "checkmark" ? "&#10004;" : (index + 1).toString();
+  }
+}
+
+export class SingleChoiceColumn extends SelectBaseColumn<QuestionDropdownModel | QuestionRadiogroupModel> {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): string {
+    if(this.isOtherInSeparateColumn) {
+      const selectedItem = this.question.selectedItem;
+      if(!selectedItem) return "";
+      return this.getItemDisplayText(selectedItem, options);
+    }
+    return super.getDisplayValue(data, table, options);
+  }
+}
+
+export class CommentColumn<T extends Question = Question> extends BaseColumn<T> {
   protected getName(): string {
     return `${this.question.name}${settings.commentPrefix}`;
   }
   protected getDisplayName(): string {
-    return this.question.hasOther
-      ? (<any>this.question).otherText
-      : this.question.commentText;
+    return this.question.commentText;
   }
-  protected getDisplayValue(data: any, table: Table, options: ITableOptions) {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): string {
     return this.question.comment;
+  }
+}
+export class OtherColumn extends CommentColumn<QuestionSelectBase> {
+  protected getDisplayName(): string {
+    return this.question.otherText;
   }
 }
 
 export class MatrixColumn extends BaseColumn<QuestionMatrixModel> {
   private valueName: string;
   private valuePath: string;
-  constructor(question: QuestionMatrixModel, private row: MatrixRowModel, table: Table) {
+  constructor(question: QuestionMatrixModel, private row: MatrixRowModel, table: ITable) {
     super(question, table);
     this.valueName = this.question.name;
     this.valuePath = this.row?.value;
@@ -143,14 +245,26 @@ export class MatrixColumn extends BaseColumn<QuestionMatrixModel> {
       : (question.title || "").trim() || question.name) + " - " + (table.useNamesAsTitles ? row?.value : row?.locText.textOrHtml);
   }
 
-  protected getDisplayValue(data: any, table: Table, options: ITableOptions) {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions) {
     let displayValue = data[this.valueName];
     if(this.valuePath && typeof displayValue === "object") {
       displayValue = displayValue[this.valuePath];
       if(displayValue !== undefined) {
-        const choiceValue = ItemValue.getItemByValue(this.question.columns, displayValue);
-        if(!!choiceValue) {
-          displayValue = options.useValuesAsLabels ? choiceValue.value : choiceValue.locText.textOrHtml;
+        if(Array.isArray(displayValue)) {
+          const res = [];
+          displayValue.forEach(itemValue => {
+            const item = ItemValue.getItemByValue(this.question.columns, itemValue);
+            if(!!item) {
+              res.push(options.useValuesAsLabels ? item.value : item.locText.textOrHtml);
+            }
+          }
+          );
+          displayValue = res.join(table.itemsDelimiter);
+        } else {
+          const choiceValue = ItemValue.getItemByValue(this.question.columns, displayValue);
+          if(!!choiceValue) {
+            displayValue = options.useValuesAsLabels ? choiceValue.value : choiceValue.locText.textOrHtml;
+          }
         }
       }
     }
@@ -168,10 +282,10 @@ export class FileColumn extends BaseColumn<QuestionFileModel> {
   protected getDataType(): ColumnDataType {
     return ColumnDataType.FileLink;
   }
-  protected getDisplayValue(data: any, table: Table, options: ITableOptions) {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions) {
     let displayValue = this.getDisplayValueCore(data);
-    if (Array.isArray(displayValue)) {
-      displayValue = Table.showFilesAsImages ? createImagesContainer(
+    if(Array.isArray(displayValue)) {
+      displayValue = table.getShowFilesAsImages() ? createImagesContainer(
         displayValue
       ).outerHTML : createLinksContainer(
         displayValue
@@ -183,7 +297,7 @@ export class FileColumn extends BaseColumn<QuestionFileModel> {
 export class MatrixDropdownColumn extends BaseColumn<QuestionMatrixDropdownModel> {
   private rowValue: string;
   private colName: string;
-  constructor(question: QuestionMatrixDropdownModel, protected row, protected col, table: Table) {
+  constructor(question: QuestionMatrixDropdownModel, protected row, protected col, table: ITable) {
     super(question, table);
     this.rowValue = this.row.value;
     this.colName = this.col.name;
@@ -199,7 +313,7 @@ export class MatrixDropdownColumn extends BaseColumn<QuestionMatrixDropdownModel
       : (question.title || "").trim() || question.name) + " - " + (table.useNamesAsTitles ? this.row.value : this.row.locText.textOrHtml) + " - " + (table.useNamesAsTitles ? this.col.name : this.col.locTitle.textOrHtml);
 
   }
-  protected getDisplayValue(data: any, table: Table, options: ITableOptions) {
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions) {
     let displayValue = data[this.question.name];
     const question = this.question;
     if(this.rowValue && this.colName && typeof displayValue === "object") {
@@ -217,19 +331,61 @@ export class MatrixDropdownColumn extends BaseColumn<QuestionMatrixDropdownModel
 }
 
 export class CustomQuestionColumn extends BaseColumn<QuestionCustomModel> {
-  public getCellData(table: Table, data: any): ICellData {
-    this.setupReadyChangedCallback(table, this.question.contentQuestion);
-    return super.getCellData(table, data);
+  constructor(question: QuestionCustomModel, table: ITable) {
+    super(question, table);
+    this.updateWhenQuestionIsReady(question.contentQuestion, table);
   }
 }
 
 export class CompositeQuestionColumn extends BaseColumn<QuestionCompositeModel> {
-  public getCellData(table: Table, data: any): ICellData {
+  constructor(question: QuestionCompositeModel, table: ITable) {
+    super(question, table);
     const questionList: Question[] = [];
     this.question.contentPanel.addQuestionsToList(questionList);
-    questionList.forEach((question: Question) => {
-      this.setupReadyChangedCallback(table, question);
+    questionList.forEach((q: Question) => {
+      this.updateWhenQuestionIsReady(q, table);
     });
-    return super.getCellData(table, data);
+  }
+}
+
+export class MatrixDynamicColumn extends BaseColumn<QuestionMatrixDynamicModel> {
+  protected getDataType(): ColumnDataType {
+    return this.table.options.useNestedTables ? ColumnDataType.NestedTable : ColumnDataType.Text;
+  }
+
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): any {
+    if(table.options.useNestedTables) {
+      return this.getDisplayValueCore(data);
+    }
+    return super.getDisplayValue(data, table, options);
+  }
+
+  public getCellData(table: ITable, data: any): ICellData {
+    const displayValue = this.getDisplayValue(data, table, table.options);
+    const formattedValue = table.options.useNestedTables && Array.isArray(displayValue)
+      ? displayValue
+      : (typeof displayValue === "string" ? displayValue : JSON.stringify(displayValue) || "");
+    return { question: this.question, displayValue: formattedValue };
+  }
+}
+
+export class PanelDynamicColumn extends BaseColumn<QuestionPanelDynamicModel> {
+  protected getDataType(): ColumnDataType {
+    return this.table.options.useNestedTables ? ColumnDataType.NestedTable : ColumnDataType.Text;
+  }
+
+  protected getDisplayValue(data: any, table: ITable, options: ITableOptions): any {
+    if(table.options.useNestedTables) {
+      return this.getDisplayValueCore(data);
+    }
+    return super.getDisplayValue(data, table, options);
+  }
+
+  public getCellData(table: ITable, data: any): ICellData {
+    const displayValue = this.getDisplayValue(data, table, table.options);
+    const formattedValue = table.options.useNestedTables && Array.isArray(displayValue)
+      ? displayValue
+      : (typeof displayValue === "string" ? displayValue : JSON.stringify(displayValue) || "");
+    return { question: this.question, displayValue: formattedValue };
   }
 }

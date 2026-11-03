@@ -1,21 +1,28 @@
-import { Event, Question, SurveyModel } from "survey-core";
-import { VisualizerBase } from "./visualizerBase";
-import { SelectBase, IVisualizerWithSelection } from "./selectBase";
+import { Event, Question, SurveyModel, surveyLocalization } from "survey-core";
+import { IsTouch } from "survey-core";
+import { ICalculationResult, VisualizerBase } from "./visualizerBase";
+import { SelectBase, IVisualizerWithSelection, ISelectBaseVisualizerOptions } from "./selectBase";
 import { AlternativeVisualizersWrapper } from "./alternativeVizualizersWrapper";
-import { DocumentHelper, createCommercialLicenseLink } from "./utils/index";
+import { createCommercialLicenseLink } from "./utils/index";
 import { localization } from "./localizationManager";
 import { IVisualizerPanelElement, IState, IPermission } from "./config";
 import { FilterInfo } from "./filterInfo";
-import { LayoutEngine, MuuriLayoutEngine } from "./layoutEngine";
+import { LayoutEngine } from "./layout-engine";
 import { DataProvider } from "./dataProvider";
+import { svgTemplate } from "./svgbundle";
+import { VisualizationManager } from "./visualizationManager";
+import { ElementVisibilityAction } from "./utils/elementVisibilityAction";
+import { IDropdownItemOption } from "./utils/dropdownBase";
+import { DocumentHelper } from "./utils/documentHelper";
+import { createActionDropdown } from "./utils/dropdownActionWidget";
+import { createDropdown } from "./utils/dropdownWidget";
 
-var styles = require("./visualizationPanel.scss");
+import "./visualizationPanel.scss";
 
 const questionElementClassName = "sa-question";
 const questionLayoutedElementClassName = "sa-question-layouted";
 
-if (!!document) {
-  const svgTemplate = require("html-loader?interpolate!val-loader!./svgbundle.html");
+if(!!document) {
   const templateHolder = document.createElement("div");
   templateHolder.style.display = "none";
   templateHolder.innerHTML = svgTemplate;
@@ -24,216 +31,119 @@ if (!!document) {
 
 export interface IVisualizerPanelRenderedElement
   extends IVisualizerPanelElement {
+  visualizerInstance?: VisualizerBase;
   renderedElement?: HTMLElement;
 }
 
+export class PanelElement implements IVisualizerPanelRenderedElement {
+  protected getStateProperties(): string[] {
+    return ["displayName", "isVisible", "isPublic"];
+  }
+  setState(elementState: any) {
+    for(let key of this.getStateProperties()) {
+      if(elementState[key] !== undefined) {
+        this[key] = elementState[key];
+      }
+    }
+    if(this.visualizerInstance) {
+      this.visualizerInstance.setState(elementState);
+    }
+  }
+  getState() {
+    const state: any = {
+      name: this.name,
+      ...this.visualizerInstance?.getState()
+    };
+    for(let key of this.getStateProperties()) {
+      if(this[key] !== undefined) {
+        state[key] = this[key];
+      }
+    }
+    return state;
+  }
+  constructor(name: string, displayName?: string) {
+    this.name = name;
+    this.displayName = displayName;
+    this.isVisible = true;
+    this.isPublic = true;
+  }
+  /**
+   * A unique identifier for the dashboard item.
+   *
+   * If the [`questions`](https://surveyjs.io/dashboard/documentation/api-reference/idashboardoptions#questions) array is specified when initializing the Dashboard, item names are generated automatically based on the associated question names.
+   * @since 3.0.0
+   */
+  name: string;
+  displayName: string;
+  isVisible: boolean;
+  isPublic: boolean;
+  visualizerInstance?: VisualizerBase;
+  renderedElement?: HTMLElement;
+  question?: Question;
+  questions?: Question[];
+}
+
 /**
- * Visualization Panel configuration. Pass it as the third argument to the `VisualizationPanel` constructor:
- *
- * ```js
- * const vizPanel = new SurveyAnalytics.VisualizationPanel(surveyQuestions, surveyResults, vizPanelOptions);
- * ```
+ * Obsolete. Use the [`IDashboardOptions`](https://surveyjs.io/dashboard/documentation/api-reference/idashboardoptions) configuration object and the [`Dashboard`](https://surveyjs.io/dashboard/documentation/api-reference/dashboard) class instead.
+ * @deprecated
  */
-export interface IVisualizationPanelOptions {
+export interface IVisualizationPanelOptions extends ISelectBaseVisualizerOptions {
   // An object named after a question that it configures.
   // questionName: {
   //   intervals: []
   // },
 
   /**
-   * The number of label characters after which truncation starts.
+   * Maximum label length before truncation starts. Set to `-1` to disable truncation.
    *
-   * Set this property to -1 to disable truncation.
-   *
-   * Default value: 27
+   * Default value: `27`
    */
   labelTruncateLength?: number;
-
   allowMakeQuestionsPrivate?: boolean;
-
   seriesValues?: string[];
   seriesLabels?: string[];
   useValuesAsLabels?: boolean;
-
   /**
-   * Pass a survey instance to use survey locales in the Visualization Panel.
+   * A survey instance used to apply survey localization settings to the Dashboard UI.
+   *
+   * [View Demo](https://surveyjs.io/dashboard/examples/localize-survey-data-dashboard-ui/ (linkStyle))
    */
   survey?: SurveyModel;
-  /**
-   * A common data provider for all visualizers.
-   */
   dataProvider?: DataProvider;
   /**
-   * Allows users to change the visibility of individual charts.
-   *
-   * This property adds a Hide button to each chart.
+   * Enables users to hide individual dashboard items. Adds a **Hide** button to each item.
    *
    * Default value: `true`
    */
   allowHideQuestions?: boolean;
   /**
-   * Specifies whether to arrange charts based on the available screen space and allow users to reorder them via drag and drop.
+   * Enables automatic layout based on available screen space and allows users to reorder items via drag and drop.
    *
-   * If this property is disabled, charts are displayed one under the other and users cannot reorder them.
+   * If disabled, items are rendered sequentially (one below another), and drag-and-drop reordering is disabled. To disable only drag-and-drop while keeping dynamic layout, set [`allowDragDrop`](#allowDragDrop) to `false`.
    *
    * Default value: `true`
    *
-   * [View the "Disable the Layout Engine" example](https://surveyjs.io/Examples/Analytics?id=custom-layout (linkStyle))
-   *
+   * [How to Disable the Layout Engine](https://github.com/surveyjs/surveyjs-howtos-and-troubleshooting/blob/50a2f6f755193afb4733435e2942f80c98731e84/categories/data-visualization/custom-layout.md (linkStyle))
    * @see layoutEngine
    */
   allowDynamicLayout?: boolean;
   /**
-   * A layout engine used to arrange charts on the Visualization Panel.
+   * Enables drag-and-drop reordering of dashboard items. Applies only if [`allowDynamicLayout`](#allowDynamicLayout) is `true`.
    *
-   * You can use this property to integrate a third-party layout engine with SurveyJS Analytics.
-   *
+   * Default value: `true`
+   * @see layoutEngine
+   */
+  allowDragDrop?: boolean;
+  /**
+   * A layout engine implementation used to arrange dashboard items. Use this property to integrate a third-party layout engine.
    * @see allowDynamicLayout
    */
   layoutEngine?: LayoutEngine;
-  /**
-   * Allows users to switch between absolute and percentage values in bar charts.
-   *
-   * This property adds a Show Percentages button to each bar chart.
-   *
-   * Default value: `false`
-   *
-   * @see showPercentages
-   * @see showOnlyPercentages
-   * @see percentagePrecision
-   */
-  allowShowPercentages?: boolean;
-  /**
-   * Specifies whether bar charts display percentages in addition to absolute values.
-   *
-   * Users can change this property value if you enable the `allowShowPercentages` property.
-   *
-   * Default value: `false`
-   *
-   * @see allowShowPercentages
-   * @see showOnlyPercentages
-   * @see percentagePrecision
-   */
-  showPercentages?: boolean;
-  /**
-   * Specifies whether bar charts display only percentages, without absolute values.
-   *
-   * Applies only if the `allowShowPercentages` or `showPercentages` property is enabled.
-   *
-   * Default value: `false`
-   *
-   * @see allowShowPercentages
-   * @see showPercentages
-   * @see percentagePrecision
-   */
-  showOnlyPercentages?: boolean;
-  /**
-   * Specifies percentage precision.
-   *
-   * Default value: 0
-   *
-   * @see allowShowPercentages
-   * @see showPercentages
-   * @see showOnlyPercentages
-   */
-  percentagePrecision?: number;
-  /**
-   * Removes the Free Trial bar.
-   *
-   * Default value: `false`
-   *
-   * **IMPORTANT**: You can enable this property only if you have a SurveyJS Analytics commercial license. It is illegal to enable this property without a license.
-   */
   haveCommercialLicense?: boolean;
-  /**
-   * Allows users to sort answers by answer count. Applies only to bar and scatter charts.
-   *
-   * This property adds a Sorting dropdown to each bar and scatter chart.
-   *
-   * Default value: `true`
-   *
-   * @see answersOrder
-   */
-  allowChangeAnswersOrder?: boolean;
-  /**
-   * Specifies how to sort answers in bar and scatter charts.
-   * Accepted values:
-   *
-   * - `"default"` (default) - Do not sort answers.
-   * - `"asc"` - Sort answers by ascending answer count.
-   * - `"desc"` - Sort answers by descending answer count.
-   *
-   * Users can change this property value if you enable the `allowChangeAnswersOrder` property.
-   *
-   * @see allowChangeAnswersOrder
-   */
-  answersOrder?: "default" | "asc" | "desc";
-  /**
-   * Allows users to hide answers with zero count in bar and scatter charts.
-   *
-   * This property adds a Hide Empty Answers button to each bar and scatter chart.
-   *
-   * Default value: `false`
-   */
-  allowHideEmptyAnswers?: boolean;
-  /**
-   * Hides answers with zero count in bar and scatter charts.
-   *
-   * Users can change this property value if you enable the `allowHideEmptyAnswers` property.
-   *
-   * Default value: `false`
-   *
-   * @see allowHideEmptyAnswers
-   */
-  hideEmptyAnswers?: boolean;
-  /**
-   * Allows users to select whether to show top 5, 10, or 20 answers by answer count.
-   *
-   * This property adds a Top N Answers dropdown to each chart.
-   *
-   * Default value: `false`
-   */
-  allowTopNAnswers?: boolean;
-  /**
-   * Allows users to show the number of respondents who did not answer a particular question.
-   *
-   * This property adds a Show Missing Answers button to each chart.
-   *
-   * Default value: `false`
-   */
-  allowShowMissingAnswers?: boolean;
-
   allowExperimentalFeatures?: boolean;
-  /**
-   * Default chart type.
-   *
-   * Accepted values depend on the question type as follows:
-   *
-   * - Boolean: `"bar"` | `"pie"` | `"doughnut"`
-   * - Date, Number: `"bar"` | `"scatter"`
-   * - Matrix: `"bar"` | `"pie"` | `"doughnut"` | `"stackedbar"`
-   * - Rating: `"bar"` | `"scatter"` | `"gauge"` | `"bullet"`
-   * - Radiogroup, Checkbox, Dropdown, Image Picker: `"bar"` | `"pie"` | `"doughnut"` | `"scatter"`
-   *
-   * To set a type for an individual chart, access this chart in the `visualizers` array and set its `chartType` property to one of the values described above:
-   *
-   * ```js
-   * const vizPanel = new SurveyAnalytics.VisualizationPanel( ... );
-   * vizPanel.visualizers[0].chartType = "stackedbar";
-   * ```
-   *
-   */
   defaultChartType?: string;
   /**
-   * Allows users to transpose a visualized matrix question.
-   *
-   * This property adds a Transpose button to charts that visualize matrixes. When users select Per Values, matrix rows go to chart arguments and matrix columns form chart series. When users select Per Columns, matrix rows form chart series and matrix columns go to chart arguments.
-   *
-   * Default value: `false`
-   */
-  allowTransposeData?: boolean;
-  /**
-   * Allows users to cross-filter charts. The filter applies when users select a series point.
+   * Enables cross-filtering between dashboard items. When enabled, selecting a data point filters other dashboard items accordingly.
    *
    * Default value: `true`
    */
@@ -241,190 +151,375 @@ export interface IVisualizationPanelOptions {
 
   renderContent?: Function;
   destroyContent?: Function;
-
   /**
-   * Removes HTML tags from survey element titles.
+   * Removes HTML markup from survey element titles before rendering.
    *
-   * Survey element titles can contain HTML markup and are specified by users. An attacker can inject malicious code into the titles. To guard against it, keep this property set to `true`.
+   * Since survey titles may contain user-defined HTML, keeping this property enabled helps prevent potential injection of malicious code.
    *
    * Default value: `true`
    */
   stripHtmlFromTitles?: boolean;
+  /**
+   * Enables switching between different visualizer types.
+   *
+   * Default value: `true`
+   * @since 2.3.8
+   */
+  allowChangeVisualizerType?: boolean;
+  /**
+   * Specifies whether to display the toolbar.
+   *
+   * Default value: `true`
+   * @since 3.0.0
+   */
+  showToolbar?: boolean;
 }
 
 /**
- * VisualizationPanel is responsible for visualizing an array of survey questions
- * <br/>
- * <br/> constructor parameters:
- * <br/> questions - an array of survey questions to visualize,
- * <br/> data - an array of answers in format of survey result,
- * <br/> options - object of the IVisualizationPanelOptions type, @see IVisualizationPanelOptions
- * <br/> elements - list of visual element descriptions
- *
+ * Obsolete. Use the [`Dashboard`](/dashboard/documentation/api-reference/dashboard) class instead.
+ * @deprecated
  */
-export class VisualizationPanel extends VisualizerBase {
-  public static haveCommercialLicense: boolean = false;
-  public visualizers: Array<VisualizerBase> = [];
-  private haveCommercialLicense: boolean = false;
-  private renderedQuestionsCount: number = 0;
+export class VisualizationPanel<P extends PanelElement = PanelElement> extends VisualizerBase {
+  public static LayoutEngine: new (allowed: boolean, itemSelector: string, dragEnabled?: boolean) => LayoutEngine;
+  private _renderedQuestionsCount: number = 0;
+  private _resetFilterButton: HTMLElement;
+  protected _elements: Array<P> = undefined;
+
+  private updateResetFilterButtonDisabled() {
+    if(this._resetFilterButton) {
+      const buttonDisabledClass = "sa-toolbar__button--disabled";
+      if(this.dataProvider.getFilters().length == 0) {
+        this._resetFilterButton.classList.add(buttonDisabledClass);
+        this._resetFilterButton.setAttribute("tabindex", "-1");
+      } else {
+        this._resetFilterButton.classList.remove(buttonDisabledClass);
+        this._resetFilterButton.setAttribute("tabindex", "0");
+      }
+    }
+  }
+
   constructor(
     protected questions: Array<any>,
     data: Array<{ [index: string]: any }>,
-    options: IVisualizationPanelOptions = { },
-    private _elements: Array<IVisualizerPanelRenderedElement> = undefined
+    options: IVisualizationPanelOptions = {},
+    elements: Array<IVisualizerPanelElement> = undefined,
+    private _isRoot = true,
+    type?: string
   ) {
-    super(null, data, options, "panel");
-
-    this._layoutEngine =
-      options.layoutEngine ||
-      new MuuriLayoutEngine(
-        this.allowDynamicLayout,
-        "." + questionLayoutedElementClassName
-      );
-    this._layoutEngine.onMoveCallback = (fromIndex: number, toIndex: number) =>
-      this.moveVisibleElement(fromIndex, toIndex);
-
-    this.showHeader = true;
-    if (this.options.survey) {
+    super(null, data, options, type || "panel");
+    this.loadingData = false;
+    this.showToolbar = options.showToolbar !== undefined ? options.showToolbar : _isRoot;
+    if(this.options.survey) {
       localization.currentLocale = this.options.survey.locale;
     }
 
-    if (_elements === undefined) {
-      this._elements = this.buildElements(questions);
-    }
-
-    this.haveCommercialLicense =
-      VisualizationPanel.haveCommercialLicense ||
-      (typeof options.haveCommercialLicense !== "undefined"
-        ? options.haveCommercialLicense
-        : false);
-
-    this.buildVisualizers(questions);
-    if (!this.haveCommercialLicense) {
-      this.registerToolbarItem("commercialLicense", () => {
-        return createCommercialLicenseLink();
-      });
-    }
-
-    this.registerToolbarItem("resetFilter", () => {
-      return DocumentHelper.createButton(() => {
-        this.visualizers.forEach((visualizer) => {
-          if (visualizer instanceof SelectBase || visualizer instanceof AlternativeVisualizersWrapper) {
-            visualizer.setSelection(undefined);
-          }
-        });
-      }, localization.getString("resetFilter"));
+    this._elements = this.buildElements(questions, elements);
+    this._elements.forEach((element) => {
+      this.buildVisualizer(element, questions);
     });
+
+    this._layoutEngine =
+        options.layoutEngine ||
+        VisualizationPanel.LayoutEngine && new VisualizationPanel.LayoutEngine(
+          this.allowDynamicLayout && this.haveSeveralChildren,
+          "." + questionLayoutedElementClassName,
+          this.allowDragDrop
+        );
+    if(!!this._layoutEngine) {
+      this._layoutEngine.onMoveCallback = (order: Array<string>) => this.reorderVisibleElements(order);
+    }
 
     this.registerToolbarItem("addElement", (toolbar: HTMLDivElement) => {
-      if (this.allowHideQuestions) {
-        let addElementSelector: HTMLElement = undefined;
-        const addElementSelectorUpdater = (
-          panel: VisualizationPanel,
-          options: any
-        ) => {
-          const hiddenElements = this.hiddenElements;
-          if (hiddenElements.length > 0) {
-            const selectWrapper = DocumentHelper.createSelector(
-              [
-                <any>{
-                  name: undefined,
-                  displayName: localization.getString("addElement"),
-                },
-              ]
-                .concat(hiddenElements)
-                .map((element) => {
-                  return {
-                    value: element.name,
-                    text: element.displayName,
-                  };
-                }),
-              (option: any) => false,
-              (e: any) => {
-                this.showElement(e.target.value);
-              }
-            );
-            (addElementSelector &&
-              toolbar.replaceChild(selectWrapper, addElementSelector)) ||
-              toolbar.appendChild(selectWrapper);
-            addElementSelector = selectWrapper;
-          } else {
-            addElementSelector && toolbar.removeChild(addElementSelector);
-            addElementSelector = undefined;
-          }
-        };
-        addElementSelectorUpdater(this, {});
-        this.onVisibleElementsChanged.add(addElementSelectorUpdater);
+      if(this.allowHideQuestions) {
+        const visibilityAction = new ElementVisibilityAction(this);
+        const selectWrapper = createActionDropdown({
+          options: () => visibilityAction.getOptions(),
+          isSelected: (option: IDropdownItemOption) => visibilityAction.isSelected(option),
+          updateOption: (option: IDropdownItemOption) => visibilityAction.updateOption(option),
+          handler: (value: string) => visibilityAction.handleSelect(value),
+          title: localization.getString("allQuestions")
+        });
+        return selectWrapper;
       }
       return undefined;
-    });
-    if (this.locales.length > 1) {
+    }, "dropdown");
+
+    this._supportSelection = true;
+    if(this.supportSelection !== false) {
+      this.registerToolbarItem("resetFilter", () => {
+        this._resetFilterButton = DocumentHelper.createButton(() => {
+          this.resetFilter();
+        }, localization.getString("resetFilter"));
+        this.updateResetFilterButtonDisabled();
+        return this._resetFilterButton;
+      }, "button", 900);
+    }
+
+    if(!this.options.disableLocaleSwitch && this.locales.length > 1) {
       const localeChoices = this.locales.map((element) => {
         return {
           value: element,
-          text: localization.getString(element)
+          text: localization.getLocaleName(element)
         };
       });
-      // localeChoices.unshift({
-      //   value: "",
-      //   text: localization.getString("changeLocale"),
-      // });
       this.registerToolbarItem("changeLocale", () => {
-        return DocumentHelper.createSelector(localeChoices,
-          (option: any) => !!option.value && this.locale === option.value,
-          (e: any) => {
-            var newLocale = e.target.value;
+        return createDropdown({
+          options: localeChoices,
+          isSelected: (option: any) => !!option.value && (this.locale || surveyLocalization.defaultLocale) === option.value,
+          handler: (e: any) => {
+            var newLocale = e;
             this.locale = newLocale;
           }
-        );
-      });
+        });
+      }, "dropdown");
     }
+  }
+
+  public get visualizers(): Array<VisualizerBase> {
+    return this._elements.map(el => el.visualizerInstance).filter(v => !!v);
+  }
+
+  public resetFilter(): void {
+    this.dataProvider?.resetFilter();
+    this.visualizers.forEach((visualizer) => {
+      if(visualizer instanceof SelectBase || visualizer instanceof AlternativeVisualizersWrapper) {
+        visualizer.setSelection(undefined);
+      }
+      visualizer.resetContentFilter();
+    });
+    this.updateResetFilterButtonDisabled();
+  }
+
+  reorderVisibleElements(order: string[]): void {
+    const newElements = [];
+    order.forEach(name => {
+      newElements.push(this._elements.filter(el => el.name === name)[0]);
+    });
+    this._elements.forEach(el => {
+      if(order.indexOf(el.name) == -1) {
+        newElements.push(el);
+      }
+    });
+    this._elements = newElements;
+    this.visibleElementsChanged(undefined, "REORDERED");
   }
 
   private onAfterRenderQuestionCallback = (
     sender: VisualizerBase,
     options: any
   ) => {
-    this.renderedQuestionsCount++;
-    if (this.renderedQuestionsCount == this.questions.length) {
-      this.renderedQuestionsCount = 0;
+    this._renderedQuestionsCount++;
+    if(this._renderedQuestionsCount == this.visibleElements.length) {
+      this._renderedQuestionsCount = 0;
+      this.layoutEngine?.update();
       this.afterRender(this.contentContainer);
     }
   };
 
-  protected showElement(elementName: string) {
-    const element = this.getElement(elementName);
-    const elementIndex = this._elements.indexOf(element);
+  private onStateChangedCallback = (
+    sender: VisualizerBase,
+    options: any
+  ) => {
+    this.stateChanged(sender.question?.name, options);
+  };
+
+  public onAlternativeVisualizerChanged: Event<
+    (sender: AlternativeVisualizersWrapper, options: any) => any,
+    AlternativeVisualizersWrapper,
+    any
+  > = new Event<(sender: AlternativeVisualizersWrapper, options: any) => any, AlternativeVisualizersWrapper, any>();
+
+  private onAlternativeVisualizerChangedCallback = (
+    sender: AlternativeVisualizersWrapper,
+    options: { visualizer: VisualizerBase }
+  ) => {
+    this.onAlternativeVisualizerChanged.fire(sender, options);
+  };
+
+  private createHideButtonElement(element: IVisualizerPanelRenderedElement) {
+    const hideElement = document.createElement("div");
+    hideElement.className = "sa-question__hide-action";
+    hideElement.title = localization.getString("hideButton");
+    hideElement.setAttribute("role", "button");
+    hideElement.setAttribute("tabindex", "0");
+    hideElement.appendChild(DocumentHelper.createSvgElement("close-16x16"));
+    hideElement.addEventListener("click", (e) => {
+      setTimeout(() => this.hideElement(element.name), 0);
+    });
+    hideElement.addEventListener("keydown", (e) => {
+      if(e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        this.hideElement(element.name);
+      }
+    });
+    return hideElement;
+  }
+  private createDragAreaElement(element: IVisualizerPanelRenderedElement) {
+    const dragAreaElement = DocumentHelper.createElement("div");
+    dragAreaElement.className = "sa-question__drag-area";
+    if(this.allowDynamicLayout && this.allowDragDrop) {
+      dragAreaElement.classList.add("sa-question__header--draggable");
+
+      const svgElement = document.createElement("div");
+      svgElement.className = "sa-question__drag-area-icon";
+      svgElement.appendChild(DocumentHelper.createSvgElement("draghorizontal-24x16"));
+      dragAreaElement.appendChild(svgElement);
+    }
+
+    return dragAreaElement;
+  }
+
+  private createHeaderElement(element: IVisualizerPanelRenderedElement) {
+    const headerElement = DocumentHelper.createElement("div");
+    headerElement.className = "sa-question__header";
+
+    const hideElement = this.allowHideQuestions ? this.createHideButtonElement(element) : undefined;
+    if(this.haveSeveralChildren && this.allowDynamicLayout && this.allowDragDrop) {
+      const dragAreaElement = this.createDragAreaElement(element);
+      headerElement.appendChild(dragAreaElement);
+      headerElement.classList.add("sa-question__header--allow-drag");
+      if(hideElement) {
+        dragAreaElement.appendChild(hideElement);
+      }
+    } else if(this.haveSeveralChildren && hideElement) {
+      headerElement.appendChild(hideElement);
+    }
+
+    if(element.displayName) {
+      const titleElement = DocumentHelper.createElement("h3");
+      titleElement.innerText = element.displayName;
+      titleElement.id = "el_" + element.name;
+      titleElement.className = questionElementClassName + "__title";
+      if(this.allowDynamicLayout && this.allowDragDrop) {
+        titleElement.classList.add(questionElementClassName + "__title--draggable");
+      }
+      headerElement.appendChild(titleElement);
+    }
+    return headerElement;
+  }
+
+  protected onDataChanged(): void {
+    // Do nothing.
+  }
+
+  protected showElementCore(element: IVisualizerPanelRenderedElement, elementIndex = -1): void {
     element.isVisible = true;
     const questionElement = this.renderPanelElement(
       element,
       this.contentContainer
     );
-    this.layoutEngine.add([questionElement], { index: elementIndex });
+    let options = undefined;
+    if(elementIndex >= 0) {
+      options = { index: elementIndex };
+    }
+    this.layoutEngine?.add([questionElement], options);
+  }
+
+  public showElement(elementName: string) {
+    const element = this.getElement(elementName);
+    const elementIndex = this._elements.indexOf(element);
+    this.showElementCore(element, elementIndex);
     this.visibleElementsChanged(element, "ADDED");
   }
 
-  protected hideElement(elementName: string) {
-    const element = this.getElement(elementName);
+  protected hideElementCore(element: IVisualizerPanelRenderedElement) {
     element.isVisible = false;
-    if (!!element.renderedElement) {
-      this.layoutEngine.remove([element.renderedElement]);
+    if(!!element.renderedElement) {
+      this.layoutEngine?.remove([element.renderedElement]);
       this.contentContainer.removeChild(element.renderedElement);
       element.renderedElement = undefined;
+    }
+  }
+
+  public hideElement(elementName: string) {
+    const element = this.getElement(elementName);
+    this.hideElementCore(element);
+    const visualizer = element.visualizerInstance;
+    if(!!visualizer && !!visualizer.getChartAdapter()) {
+      visualizer.getChartAdapter().destroy(element.renderedElement);
     }
     this.visibleElementsChanged(element, "REMOVED");
   }
 
+  public hideAllElements(): void {
+    const affectedElements = [];
+    this._elements.forEach(element => {
+      if(element.isVisible) {
+        this.hideElementCore(element);
+        affectedElements.push(element);
+      }
+    });
+    this.visibleElementsChanged(undefined, "REMOVEDALL");
+  }
+
+  public showAllElements() {
+    const affectedElements = [];
+    this._elements.forEach(element => {
+      if(!element.isVisible) {
+        this.showElementCore(element);
+        affectedElements.push(element);
+      }
+    });
+    this.visibleElementsChanged(undefined, "ADDEDDALL");
+  }
+
+  public addElement(element: IVisualizerPanelElement | P, index?: number): void {
+    let panelElement: P;
+    if(element instanceof PanelElement) {
+      panelElement = element as P;
+    } else {
+      const question = (this.questions || []).find((q: any) => q.name === (element as IVisualizerPanelElement).name);
+      panelElement = this.createElement(element as IVisualizerPanelElement, question);
+      panelElement.setState(element);
+    }
+
+    if(!panelElement.visualizerInstance) {
+      this.buildVisualizer(panelElement, this.questions);
+    }
+
+    const insertIndex = (index !== undefined && index >= 0 && index < this._elements.length)
+      ? index
+      : this._elements.length;
+
+    this._elements.splice(insertIndex, 0, panelElement);
+
+    if(panelElement.isVisible && !!this.contentContainer) {
+      this.showElementCore(panelElement, insertIndex);
+    }
+
+    this.visibleElementsChanged(panelElement, "ADDED");
+  }
+
+  public removeElement(element: P | string): void {
+    const panelElement = typeof element === "string" ? this.getElement(element) : element;
+    if(!panelElement) return;
+
+    if(!!panelElement.renderedElement) {
+      this.layoutEngine?.remove([panelElement.renderedElement]);
+      if(!!this.contentContainer) {
+        this.contentContainer.removeChild(panelElement.renderedElement);
+      }
+    }
+
+    this.destroyElementVisualizer(panelElement);
+
+    const elementIndex = this._elements.indexOf(panelElement);
+    if(elementIndex >= 0) {
+      this._elements.splice(elementIndex, 1);
+      this.visibleElementsChanged(panelElement, "REMOVED");
+    }
+  }
+
   protected makeElementPrivate(element: IVisualizerPanelElement) {
     element.isPublic = false;
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged("isPublic", false);
     this.onPermissionsChangedCallback &&
       this.onPermissionsChangedCallback(this);
   }
 
   protected makeElementPublic(element: IVisualizerPanelElement) {
     element.isPublic = true;
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged("isPublic", true);
     this.onPermissionsChangedCallback &&
       this.onPermissionsChangedCallback(this);
   }
@@ -455,123 +550,125 @@ export class VisualizationPanel extends VisualizerBase {
     this.visualizers.forEach(visualizer => visualizer.backgroundColor = color);
   }
 
-  private buildVisualizers(questions: Array<Question>) {
-    questions.forEach((question) => {
-      const visualizer = this.createVisualizer(question);
+  protected setupVisualizer(visualizer: VisualizerBase, question: Question) {
+    if(this.allowMakeQuestionsPrivate) {
+      visualizer.registerToolbarItem("makePrivatePublic", () => {
+        const element = this.getElement(question.name);
 
-      if (this.allowHideQuestions) {
-        visualizer.registerToolbarItem("removeQuestion", () => {
-          return DocumentHelper.createButton(() => {
-            setTimeout(() => this.hideElement(question.name), 0);
-          }, localization.getString("hideButton"));
-        });
-      }
+        const state = element.isPublic ? "first" : "second";
 
-      if (this.allowMakeQuestionsPrivate) {
-        visualizer.registerToolbarItem("makePrivatePublic", () => {
-          const element = this.getElement(question.name);
+        const pathMakePrivateSvg = "makeprivate";
+        const pathMakePublicSvg = "makepublic";
+        const makePrivateTitle = localization.getString("makePrivateButton");
+        const makePublicTitle = localization.getString("makePublicButton");
+        const doPrivate = (e: any) => {
+          setTimeout(() => this.makeElementPrivate(element), 0);
+        };
+        const doPublic = (e: any) => {
+          setTimeout(() => this.makeElementPublic(element), 0);
+        };
 
-          const state = element.isPublic ? "first" : "second";
+        return DocumentHelper.createSvgToggleButton(
+          pathMakePublicSvg,
+          pathMakePrivateSvg,
+          makePrivateTitle,
+          makePublicTitle,
+          doPublic,
+          doPrivate,
+          state
+        );
+      }, "button");
+    }
 
-          const pathMakePrivateSvg = "makeprivate";
-          const pathMakePublicSvg = "makepublic";
-          const makePrivateTitle = localization.getString("makePrivateButton");
-          const makePublicTitle = localization.getString("makePublicButton");
-          const doPrivate = (e: any) => {
-            setTimeout(() => this.makeElementPrivate(element), 0);
-          };
-          const doPublic = (e: any) => {
-            setTimeout(() => this.makeElementPublic(element), 0);
-          };
-
-          return DocumentHelper.createSvgToggleButton(
-            pathMakePublicSvg,
-            pathMakePrivateSvg,
-            makePrivateTitle,
-            makePublicTitle,
-            doPublic,
-            doPrivate,
-            state
-          );
-        });
-      }
-
-      if (visualizer.supportSelection) {
-        const visualizerWithSelection = <IVisualizerWithSelection>(
+    if(visualizer.supportSelection) {
+      const visualizerWithSelection = <IVisualizerWithSelection>(
           (<any>visualizer)
         );
-        let filterInfo = new FilterInfo(visualizerWithSelection);
+      visualizerWithSelection.onDataItemSelected = (
+        selectedValue: any,
+        selectedText: string
+      ) => {
+        // visualizer.dataNames[0] ?
+        const dataName = question.valueName || question.name
+          || question.question?.valueName || question.question?.name
+          || question.dataField || question.questionName;
+        this.setFilter(dataName, selectedValue);
+      };
+    }
 
-        visualizer.registerToolbarItem("questionFilterInfo", () => {
-          filterInfo.update(visualizerWithSelection.selection);
-          return filterInfo.htmlElement;
-        });
+    visualizer.onUpdate = () => this.layout();
+    visualizer.onAfterRender.add(this.onAfterRenderQuestionCallback);
+    visualizer.onStateChanged.add(this.onStateChangedCallback);
 
-        visualizerWithSelection.onDataItemSelected = (
-          selectedValue: any,
-          selectedText: string
-        ) => {
-          filterInfo.update({ value: selectedValue, text: selectedText });
-          this.setFilter(question.name, selectedValue);
-        };
-      }
+    if(visualizer instanceof AlternativeVisualizersWrapper) {
+      visualizer.onVisualizerChanged.add(this.onAlternativeVisualizerChangedCallback);
+    }
+  }
 
-      visualizer.onUpdate = () => this.layout();
-      visualizer.onAfterRender.add(this.onAfterRenderQuestionCallback);
-      this.visualizers.push(visualizer);
-    });
+  protected buildVisualizer(element: P, questions: Array<Question>) {
+    const visualizerOptions = Object.assign({}, this.options);
+    if(visualizerOptions.dataProvider === undefined) {
+      visualizerOptions.dataProvider = this.dataProvider;
+    }
+    let question = element.question || questions.filter((q: any) => q.name === element.name || q.question && q.question.name === element.name)[0];
+    let visualizer: VisualizerBase;
+    if(element.questions && element.questions.length > 0) {
+      visualizer = new (VisualizationManager.getPivotVisualizerConstructor() as any)(element.questions, [], visualizerOptions, false);
+      this.setupVisualizer(visualizer, element.questions[0]);
+    } else if(!!question) {
+      visualizer = this.createVisualizer(question, visualizerOptions, []);
+      this.setupVisualizer(visualizer, question);
+    }
+    if(!visualizer) {
+      return;
+    }
+    element.visualizerInstance = visualizer;
+  }
+
+  private destroyElementVisualizer(element: P) {
+    const visualizer = element.visualizerInstance;
+    if(!visualizer) {
+      return;
+    }
+    visualizer.onUpdate = undefined;
+    if(visualizer instanceof SelectBase) {
+      visualizer.onDataItemSelected = undefined;
+    }
+    if(visualizer instanceof AlternativeVisualizersWrapper) {
+      visualizer.onVisualizerChanged.remove(this.onAlternativeVisualizerChangedCallback);
+    }
+    visualizer.onStateChanged.remove(this.onStateChangedCallback);
+    visualizer.onAfterRender.remove(this.onAfterRenderQuestionCallback);
+    visualizer.destroy();
+    element.visualizerInstance = undefined;
+    element.renderedElement = undefined;
   }
 
   private destroyVisualizers() {
-    this.visualizers.forEach((visualizer) => {
-      visualizer.onUpdate = undefined;
-      if (visualizer instanceof SelectBase) {
-        visualizer.onDataItemSelected = undefined;
-      }
-      visualizer.onAfterRender.remove(this.onAfterRenderQuestionCallback);
-      visualizer.destroy();
+    this._elements.forEach((element) => {
+      this.destroyElementVisualizer(element);
     });
-    this.visualizers = [];
+  }
+
+  protected setLocale(newLocale: string) {
+    super.setLocale(newLocale);
+    (this.questions || []).forEach((question) => {
+      question = Array.isArray(question) ? question[0] : question;
+      const element = this.getElement(question.name);
+      if(!!element) {
+        element.displayName = this.getTitle(question);
+      }
+    });
+    this.visualizers.forEach(v => {
+      v.options.seriesLabels = this.options.seriesLabels;
+      v["setLocale"](newLocale);
+      v.clear();
+    });
+    this.stateChanged("locale", newLocale);
   }
 
   /**
-   * Returns current locale of the visualization panel.
-   * If locales more than one, the language selection dropdown will be added in the toolbar
-   * In order to use survey locales the survey instance object should be passed as 'survey' option for visualizer
-   */
-  public get locale() {
-    var survey = this.options.survey;
-    if (!!survey) {
-      return survey.locale;
-    }
-    return localization.currentLocale;
-  }
-
-  /**
-   * Sets locale for visualization panel.
-   */
-  public set locale(newLocale: string) {
-    this.setLocale(newLocale);
-    this.refresh();
-    this.onStateChanged.fire(this, this.state);
-  }
-
-  private setLocale(newLocale: string) {
-    var survey = this.options.survey;
-    if (!!survey) {
-      survey.locale = newLocale;
-      (this.questions || []).forEach((question) => {
-        const element = this.getElement(question.name);
-        if (!!element) {
-          element.displayName = this.processText(question.title);
-        }
-      });
-    }
-    localization.currentLocale = newLocale;
-  }
-
-  /**
-   * Returns whether the VisualizationPanel allows dynamic layouting - rearrange items via drap/drop. Set via options.
+   * Returns the [`allowDynamicLayout`](https://surveyjs.io/dashboard/documentation/api-reference/idashboardoptions#allowDynamicLayout) property value passed to the constructor.
    */
   public get allowDynamicLayout() {
     return (
@@ -581,7 +678,20 @@ export class VisualizationPanel extends VisualizerBase {
   }
 
   /**
-   * Returns whether the VisualizationPanel allows to hide/show individual inner visualizers.
+   * Returns the [`allowDragDrop`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizationpaneloptions#allowDragDrop) property value passed to the constructor.
+   */
+  public get allowDragDrop() {
+    if(IsTouch) {
+      return false;
+    }
+    return (
+      this.options.allowDragDrop === undefined ||
+      this.options.allowDragDrop === true
+    );
+  }
+
+  /**
+   * Returns the [`allowHideQuestions`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizationpaneloptions#allowHideQuestions) property value passed to the constructor.
    */
   public get allowHideQuestions() {
     return (
@@ -590,58 +700,108 @@ export class VisualizationPanel extends VisualizerBase {
     );
   }
 
-  /**
-   * Returns whether the VisualizationPanel allows to make private/public individual inner visualizers for work with permissions.
-   */
   public get allowMakeQuestionsPrivate() {
     return this.options.allowMakeQuestionsPrivate === true;
   }
 
+  get haveSeveralChildren(): boolean {
+    return this._elements?.length > 1;
+  }
+
   private _layoutEngine: LayoutEngine;
   /**
-   * Returns the layout engine instance if any.
+   * Returns a [`LayoutEngine`](https://surveyjs.io/dashboard/documentation/api-reference/layoutengine) instance that arranges visualization items within the dashboard.
+   * @hidefor Dashboard
    */
   public get layoutEngine() {
     return this._layoutEngine;
   }
 
-  protected buildElements(questions: any[]): IVisualizerPanelElement[] {
+  protected createElement(element: IVisualizerPanelElement, question?: Question): P {
+    if(!!element) {
+      return new PanelElement(element.name, element.displayName || element.title) as P;
+    }
+    return new PanelElement(question.name, this.getTitle(question)) as P;
+  }
+
+  protected buildElements(questions: Question[], elements: Array<IVisualizerPanelElement | string> = []): P[] {
+    if(elements.length > 0) {
+      return elements.map((element) => {
+        let el = null;
+        if(typeof element === "string") {
+          const q = (questions || []).find((q) => q.name === element || q.valueName === element);
+          if(q) {
+            el = this.createElement(undefined, q);
+          } else {
+            // If no matching question is found, create a simple visualizer description
+            // or throw an error?
+            // This code was added to support responsecount visualizer
+            const descriptor = { name: element, dataField: element, type: element } as any;
+            el = this.createElement(descriptor, undefined);
+            el.setState(descriptor);
+          }
+        } else {
+          const descriptor = Object.assign({}, element) as any;
+          let question = (questions || []).filter(q => q.name === (descriptor.dataField || descriptor.name))[0];
+          if(typeof descriptor.question === "string") {
+            question = (questions || []).filter((q) => q.name === descriptor.question || q.valueName === descriptor.question)[0];
+          }
+          el = this.createElement(descriptor, question);
+          el.setState(element);
+        }
+        return el;
+      });
+    }
+
     return (questions || []).map((question) => {
-      return {
-        name: question.name,
-        displayName: this.processText(question.title),
-        isVisible: true,
-        isPublic: true,
-        type: undefined,
-      };
+      let questionAsElementDeclaration = Array.isArray(question) ? question[0] : question;
+      questionAsElementDeclaration = questionAsElementDeclaration.question || questionAsElementDeclaration;
+      const pe = this.createElement(undefined, questionAsElementDeclaration);
+      if(Array.isArray(question)) {
+        pe.questions = question;
+      } else {
+        pe.question = question;
+      }
+      return pe;
     });
   }
 
   /**
-   * Returns panel elements descriptions array.
-   * Inner visualizers are rendered in the order of this array and with titles from the displayName property
+   * Returns an array of [`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement) objects with information about visualization items.
+   * @param questionNames Question [names](https://surveyjs.io/form-library/documentation/api-reference/question#name). Do not specify this parameter to get an array of all visualization items.
+   * @see visibleElements
+   * @see hiddenElements
+   * @hidefor Dashboard
    */
-  public getElements(): IVisualizerPanelElement[] {
-    return (this._elements || []).map((element) => {
-      return {
-        name: element.name,
-        displayName: element.displayName,
-        isVisible: element.isVisible,
-        isPublic: element.isPublic,
-        type: element.type,
-      };
+  public getElements(questionNames?: Array<string>): IVisualizerPanelElement[] {
+    const result = [];
+    (this._elements || []).forEach((element) => {
+      if(!questionNames || questionNames.indexOf(element.name) !== -1) {
+        result.push(element.getState());
+      }
     });
+    return result;
   }
 
   /**
-   * Returns panel's visible elements.
+   * Returns an array of [`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement) objects with information about currently visible visualization items.
+   *
+   * If you want to disallow users to hide visualization items, set the [`allowHideQuestions`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizationpaneloptions#allowHideQuestions) property to `false`.
+   * @see hiddenElements
+   * @see getElements
+   * @hidefor Dashboard
    */
   public get visibleElements() {
     return this._elements.filter((el: IVisualizerPanelElement) => el.isVisible);
   }
 
   /**
-   * Returns panel's hidden elements.
+   * Returns an array of [`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement) objects with information about currently hidden visualization items.
+   *
+   * If you want to disallow users to hide visualization items, set the [`allowHideQuestions`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizationpaneloptions#allowHideQuestions) property to `false`.
+   * @see visibleElements
+   * @see getElements
+   * @hidefor Dashboard
    */
   public get hiddenElements() {
     return this._elements.filter(
@@ -649,122 +809,180 @@ export class VisualizationPanel extends VisualizerBase {
     );
   }
 
-  /**
-   * Returns panel's public elements.
-   */
   public get publicElements() {
     return this._elements.filter((el: IVisualizerPanelElement) => el.isPublic);
   }
 
-  /**
-   * Returns panel's private elements.
-   */
   public get privateElements() {
     return this._elements.filter((el: IVisualizerPanelElement) => !el.isPublic);
   }
 
   protected get locales() {
-    if (this.options.survey) return this.options.survey.getUsedLocales();
+    if(this.options.survey) return this.options.survey.getUsedLocales();
     return [];
   }
 
   /**
-   * Returns panel element description by the question name.
+   * Returns a visualization item with a specified question name.
+   * @param name A question [name](https://surveyjs.io/form-library/documentation/api-reference/question#name).
+   * @hidefor Dashboard
    */
-  public getElement(name: string) {
-    return this._elements.filter((el) => el.name === name)[0];
+  public getElement(questionName: string) {
+    return this._elements.filter((el) => el.name === questionName)[0];
   }
 
   /**
-   * Returns panel element visualizer by the question name.
+   * Returns a [visualizer](https://surveyjs.io/dashboard/documentation/api-reference/visualizerbase) that visualizes a specified survey question.
+   * @param questionName A question [name](https://surveyjs.io/form-library/documentation/api-reference/question#name).
+   * @hidefor Dashboard
    */
-  public getVisualizer(visualizerName: string) {
-    return this.visualizers.filter((v) => v.question.name === visualizerName)[0];
+  public getVisualizer(questionName: string) {
+    return this.getElement(questionName)?.visualizerInstance;
   }
 
   /**
-   * Fires when element visibility has been changed.
-   * options:
-   * elements - panel elements array
-   * changed - changed element
-   * reason - reason (string) why event fired: "ADDED", "MOVED" or "REMOVED"
+   * @deprecated Use [`onElementShown`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel#onElementShown), [`onElementHidden`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel#onElementHidden), or [`onElementMoved`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel#onElementMoved) instead.
+   * @hidden
    */
   public onVisibleElementsChanged = new Event<
-    (sender: VisualizationPanel, options: any) => any,
+    (sender: VisualizationPanel, options: any) => any, VisualizationPanel,
+    any
+  >();
+
+  /**
+   * An event that is raised when users [show a visualization item](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizationpaneloptions#allowHideQuestions).
+   *
+   * Parameters:
+   *
+   * - `sender`: [`VisualizationPanel`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel)\
+   * A `VisualizationPanel` that raised the event.
+   *
+   * - `options.elements`: Array\<[`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement)\>\
+   * Information about all visualization items rendered by this `VisualizationPanel`.
+   *
+   * - `options.element`: [`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement)\
+   * A visualization item that has been shown.
+   * @hidefor Dashboard
+   */
+  public onElementShown = new Event<
+    (sender: VisualizationPanel, options: any) => any, VisualizationPanel,
+    any
+  >();
+
+  /**
+   * An event that is raised when users [hide a visualization item](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizationpaneloptions#allowHideQuestions).
+   *
+   * Parameters:
+   *
+   * - `sender`: [`VisualizationPanel`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel)\
+   * A `VisualizationPanel` that raised the event.
+   *
+   * - `options.elements`: Array\<[`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement)\>\
+   * Information about all visualization items rendered by this `VisualizationPanel`.
+   *
+   * - `options.element`: [`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement)\
+   * A visualization item that has been hidden.
+   * @hidefor Dashboard
+   */
+  public onElementHidden = new Event<
+    (sender: VisualizationPanel, options: any) => any, VisualizationPanel,
+    any
+  >();
+
+  /**
+   * An event that is raised when users [move a visualization item](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizationpaneloptions#allowDynamicLayout).
+   *
+   * Parameters:
+   *
+   * - `sender`: [`VisualizationPanel`](https://surveyjs.io/dashboard/documentation/api-reference/visualizationpanel)\
+   * A `VisualizationPanel` that raised the event.
+   *
+   * - `options.elements`: Array\<[`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement)\>\
+   * Information about all visualization items rendered by this `VisualizationPanel`.
+   *
+   * - `options.element`: [`IVisualizerPanelElement`](https://surveyjs.io/dashboard/documentation/api-reference/ivisualizerpanelelement)\
+   * A visualization item that has been moved.
+   * @hidefor Dashboard
+   */
+  public onElementMoved = new Event<
+    (sender: VisualizationPanel, options: any) => any, VisualizationPanel,
     any
   >();
 
   protected visibleElementsChanged(
     element: IVisualizerPanelElement,
     reason: string
-  ) {
-    if (!this.onVisibleElementsChanged.isEmpty) {
+  ): void {
+    if(reason === "SHOWN" && !this.onElementShown.isEmpty) {
+      this.onElementShown.fire(this, {
+        elements: this._elements,
+        element: element
+      });
+    }
+    if(reason === "REMOVED" && !this.onElementHidden.isEmpty) {
+      this.onElementHidden.fire(this, {
+        elements: this._elements,
+        element: element
+      });
+    }
+    if(reason === "MOVED" && !this.onElementMoved.isEmpty) {
+      this.onElementMoved.fire(this, {
+        elements: this._elements,
+        element: element
+      });
+    }
+
+    if(!this.onVisibleElementsChanged.isEmpty) {
       this.onVisibleElementsChanged.fire(this, {
         elements: this._elements,
         changed: element,
         reason: reason,
       });
     }
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged("visibleElements", reason);
     this.layout();
   }
 
-  /**
-   * Fires when vizualization panel state changed.
-   * sender - this panel
-   * state - new state of the panel
-   */
-  public onStateChanged = new Event<
-    (sender: VisualizationPanel, state: IState) => any,
-    any
-  >();
-
-  /**
-   * Fires when permissions changed
-   */
   public onPermissionsChangedCallback: any;
 
-  /**
-   * Renders given panel element.
-   */
-  protected renderPanelElement(
-    element: IVisualizerPanelRenderedElement,
-    container: HTMLElement
-  ) {
-    const visualizer = this.getVisualizer(element.name);
+  protected renderPanelElement(element: IVisualizerPanelRenderedElement, container: HTMLElement) {
+    const visualizer = element.visualizerInstance;
+    if(!visualizer) {
+      return;
+    }
 
     const questionElement = DocumentHelper.createElement("div");
+    questionElement.dataset.question = element.name;
+    questionElement.role = "group";
+    questionElement.setAttribute("aria-labelledby", "el_" + element.name);
 
-    container.appendChild(questionElement);
+    !!container && container.appendChild(questionElement);
 
     const questionContent = DocumentHelper.createElement("div");
-    const titleElement = DocumentHelper.createElement("h3");
     const vizualizerElement = DocumentHelper.createElement("div");
+    const headerElement = this.createHeaderElement(element);
 
-    titleElement.innerText = element.displayName;
-
-    questionElement.className = this.allowDynamicLayout
-      ? questionElementClassName + " " + questionLayoutedElementClassName
-      : questionElementClassName;
-    titleElement.className = questionElementClassName + "__title";
-    if (this.allowDynamicLayout) {
-      titleElement.className =
-        titleElement.className +
-        " " +
-        questionElementClassName +
-        "__title--draggable";
+    questionElement.className = questionElementClassName;
+    if(this.allowDynamicLayout && this.haveSeveralChildren) {
+      questionElement.classList.add(questionLayoutedElementClassName);
     }
     questionContent.className = questionElementClassName + "__content";
-    questionContent.style.backgroundColor = this.backgroundColor;
 
-    questionContent.appendChild(titleElement);
+    questionContent.appendChild(headerElement);
     questionContent.appendChild(vizualizerElement);
     questionElement.appendChild(questionContent);
 
-    visualizer.render(vizualizerElement);
+    visualizer.render(vizualizerElement, false);
 
     element.renderedElement = questionElement;
     return questionElement;
+  }
+
+  protected renderBanner(container: HTMLElement): void {
+    if(!this.haveCommercialLicense && this._isRoot) {
+      this.attachBanner(container, createCommercialLicenseLink());
+    }
+    super.renderBanner(container);
   }
 
   protected renderToolbar(container: HTMLElement) {
@@ -772,120 +990,151 @@ export class VisualizationPanel extends VisualizerBase {
     super.renderToolbar(container);
   }
 
-  /**
-   * Renders all questions into given HTML container element.
-   * container - HTML element to render the panel
-   */
-  public renderContent(container: HTMLElement) {
+  public renderContent(container: HTMLElement): void {
     container.className += " sa-panel__content sa-grid";
 
     this.visibleElements.forEach((element) => {
       let questionElement = this.renderPanelElement(element, container);
     });
 
-    this.layoutEngine.start(container);
+    this.layoutEngine?.start(container);
     // !!window && window.dispatchEvent(new UIEvent("resize"));
   }
 
-  /**
-   * Destroys visualizer and all inner content.
-   */
   protected destroyContent(container: HTMLElement) {
-    this.layoutEngine.stop();
+    this.layoutEngine?.stop();
+    this.visualizers.forEach(visualizer => visualizer.clear());
     super.destroyContent(container);
   }
 
   /**
-   * Redraws visualizer toobar and all inner content.
+   * Redraws the dashboard and all its content.
    */
   public refresh() {
-    if (!!this.toolbarContainer) {
+    if(!!this.toolbarContainer) {
       this.destroyToolbar(this.toolbarContainer);
       this.renderToolbar(this.toolbarContainer);
     }
     super.refresh();
   }
 
-  /**
-   * Updates layout of visualizer inner content.
-   */
   public layout() {
-    this.layoutEngine.update();
+    this.layoutEngine?.update();
   }
 
   /**
-   * Sets filter by question name and value.
+   * Filters visualized data based on a specified question name and value. This method is called when a user clicks a chart point.
+   * @param questionName A question [name](https://surveyjs.io/form-library/documentation/api-reference/question#name).
+   * @param selectedValue A filter value.
    */
   public setFilter(questionName: string, selectedValue: any) {
-    this.dataProvider.setFilter(questionName, selectedValue);
+    if(!this.dataPath) {
+      this.dataProvider.setFilter(questionName, selectedValue);
+    } else {
+      if(selectedValue !== undefined && selectedValue !== null) {
+        if(typeof selectedValue === "object" && Object.keys(selectedValue)[0]) {
+          const seriesValue = Object.keys(selectedValue)[0];
+          this.dataProvider.setFilter(this.dataPath, { [questionName]: selectedValue[seriesValue], [DataProvider.seriesMarkerKey]: seriesValue });
+        } else {
+          this.dataProvider.setFilter(this.dataPath, { [questionName]: selectedValue });
+        }
+      } else {
+        this.dataProvider.setFilter(this.dataPath, undefined);
+      }
+    }
+    this.updateResetFilterButtonDisabled();
   }
 
-  /**
-   * Gets vizualization panel state.
-   */
-  public get state(): IState {
+  public getState(): IState {
     return {
       locale: this.locale,
-      elements: [].concat(this._elements.map(element => {
-        const visualizer = this.getVisualizer(element.name);
-        const elementState = { ...element, ...visualizer?.getState() };
-        if(elementState.renderedElement !== undefined) {
-          delete elementState.renderedElement;
-        }
-        return elementState;
-      })),
+      elements: [].concat(this._elements.map(element => element.getState())),
     };
   }
+
   /**
-   * Sets vizualization panel state.
+   * Gets or sets the Dashboard state.
+   *
+   * The state includes configuration of dashboard items and the current locale.
+   *
+   * [View Demo](https://surveyjs.io/dashboard/examples/save-dashboard-state-to-local-storage/ (linkStyle))
+   * @see onStateChanged
    */
+  public get state(): IState {
+    return this.getState();
+  }
   public set state(newState: IState) {
-    if (!newState) return;
+    if(!newState) return;
+    this._settingState = true;
+    try {
+      if(Array.isArray(newState.elements)) {
+        const questionNames = this.questions.map(q => Array.isArray(q) ? q[0].name : q.name);
+        const loadedElements = [].concat(newState.elements.filter(e => (questionNames.indexOf(e.name) !== -1)));
 
-    if (Array.isArray(newState.elements)) {
-      const questionNames = this.questions.map(q => q.name);
-      this._elements = [].concat(newState.elements.filter(e => (questionNames.indexOf(e.name) !== -1)));
-    }
-
-    if (typeof newState.locale !== "undefined") this.setLocale(newState.locale);
-
-    this._elements.forEach(elementState => {
-      const visualizer = this.getVisualizer(elementState.name);
-      if(visualizer !== undefined) {
-        visualizer.setState(elementState);
+        const newElements = [];
+        loadedElements.forEach(elementState => {
+          const oldElement = this.getElement(elementState.name);
+          if(oldElement !== undefined) {
+            oldElement.setState(elementState);
+            newElements.push(oldElement);
+          } else {
+            let newElement = this.createElement(elementState, (this.questions || []).filter(q => q.name === elementState.name)[0]);
+            newElement.setState(elementState);
+            newElements.push(newElement);
+          }
+        });
+        this._elements = newElements;
       }
-    });
 
+      if(typeof newState.locale !== "undefined") {
+        this.setLocale(newState.locale);
+      }
+    } finally {
+      this._settingState = false;
+    }
+    this.refresh();
+  }
+  public resetState(): void {
+    this._settingState = true;
+    super.resetState();
+    try {
+      this.visualizers.forEach(visualizer => visualizer.resetState());
+      this.locale = surveyLocalization.defaultLocale;
+    } finally {
+      this._settingState = false;
+    }
     this.refresh();
   }
 
-  /**
-   * Gets vizualization panel permissions.
-   */
   public get permissions(): IPermission[] {
-    return <any>this._elements.map((element) => {
-      return {
-        name: element.name,
-        isPublic: element.isPublic,
-      };
-    });
+    return this._elements.map((element) => ({
+      name: element.name,
+      isPublic: element.isPublic,
+    }));
   }
-  /**
-   * Sets vizualization panel permissions.
-   */
   public set permissions(permissions: IPermission[]) {
-    const updatedElements = this._elements.map((element) => {
+    if(permissions) {
       permissions.forEach((permission) => {
-        if (permission.name === element.name)
-          element.isPublic = permission.isPublic;
+        const element = this.getElement(permission.name);
+        !!element && (element.isPublic = permission.isPublic);
       });
+      this.refresh();
+      !!this.onPermissionsChangedCallback && this.onPermissionsChangedCallback(this);
+    }
+  }
 
-      return { ...element };
+  protected getCalculatedValuesCore(): ICalculationResult {
+    return {
+      data: [],
+      values: []
+    };
+  }
+
+  protected onThemeChanged(): void {
+    super.onThemeChanged();
+    this.visualizers.forEach(v => {
+      v.theme = this.theme;
     });
-    this._elements = [].concat(updatedElements);
-    this.refresh();
-    this.onPermissionsChangedCallback &&
-      this.onPermissionsChangedCallback(this);
   }
 
   destroy() {

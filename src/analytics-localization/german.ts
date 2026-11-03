@@ -1,0 +1,300 @@
+import { setupLocale } from "../localizationManager";
+
+export var germanStrings = {
+  // "Group By Me"
+  groupButton: "Gruppieren",
+  // "Ungroup By Me"
+  ungroupButton: "Gruppierung aufheben",
+  // "Select Me"
+  selectButton: "Mich auswählen",
+  // [Auto-translated] "Column reorder"
+  columnReorder: "Säulenumordnung",
+  // "Hide column"
+  hideColumn: "Spalte ausblenden",
+  // "Show column"
+  showColumn: "Spalte einblenden",
+  // [Auto-translated] "Columns"
+  columns: "Säulen",
+  // "Make column private"
+  makePrivateColumn: "Spalte privat machen",
+  // "Make column public"
+  makePublicColumn: "Spalte veröffentlichen",
+  // "Move to Detail"
+  moveToDetail: "in Details verschieben",
+  // "Show as Column"
+  showAsColumn: "Als Spalte anzeigen",
+  // "Search..."
+  filterPlaceholder: "Suche...",
+  // "Remove rows"
+  removeRows: "Zeilen entfernen",
+  // "Show"
+  showLabel: "Anzeigen",
+  // "entries"
+  entriesLabel: "Einträge",
+  // [Auto-translated] "Entries on Page:"
+  entriesOnPageLabel: "Einträge auf der Seite:",
+  // "Texts in table"
+  visualizer_text: "Texte in Tabellenform",
+  // [Auto-translated] "Wordcloud"
+  visualizer_wordcloud: "Wordcloud",
+  // "Histogram"
+  visualizer_histogram: "Histogramm",
+  // "Average"
+  visualizer_number: "Durchschnitt",
+  // [Auto-translated] "Average"
+  visualizer_average: "Durchschnitt",
+  // "Table"
+  visualizer_choices: "Tabelle",
+  // "Chart"
+  visualizer_selectBase: "Diagrammtyp",
+  // [Auto-translated] "Chart"
+  visualizer_matrix: "Diagramm",
+  // "Bar"
+  chartType_bar: "Balkendiagramm",
+  // "Vertical Bar"
+  chartType_vbar: "Balkendiagramm vertikal",
+  // "Stacked Bar"
+  chartType_stackedbar: "Gestapeltes Balkendiagramm",
+  // "Doughnut"
+  chartType_doughnut: "Donut-Diagramm",
+  // "Pie"
+  chartType_pie: "Kreisdiagramm",
+  // "Scatter"
+  chartType_scatter: "Punktediagramm",
+  // "Gauge"
+  chartType_gauge: "Pegeldiagramm",
+  // "Bullet"
+  chartType_bullet: "Aufzählungsdiagramm",
+  // [Auto-translated] "Line"
+  chartType_line: "Linie",
+  // [Auto-translated] "Radar"
+  chartType_radar: "Radar",
+  // [Auto-translated] "Histogram"
+  chartType_histogram: "Histogramm",
+  // [Auto-translated] "Vertical Histogram"
+  chartType_vhistogram: "Vertikales Histogramm",
+  // [Auto-translated] "Stacked Histogram"
+  chartType_stackedhistogram: "Gestapeltes Histogramm",
+  // "Hide"
+  hideButton: "Ausblenden",
+  // "Make private"
+  makePrivateButton: "Privat machen",
+  // "Make public"
+  makePublicButton: "Öffentlich machen",
+  // "Show"
+  showButton: "Anzeigen",
+  // [Auto-translated] "Filter"
+  filter: "Filter",
+  // "Reset Filter"
+  resetFilter: "Filter zurücksetzen",
+  // "Change Locale"
+  changeLocale: "Lokalisierung ändern",
+  // "Clear"
+  clearButton: "Einstellungen löschen",
+  // "Choose question to show..."
+  addElement: "Wählen Sie eine Frage, um zu zeigen...",
+  // [Auto-translated] "All questions"
+  allQuestions: "Alle Fragen",
+  // [Auto-translated] "Select all"
+  selectAll: "Alle auswählen",
+  // [Auto-translated] "Clear selection"
+  clearSelection: "Klare Auswahl",
+  // "Default Order"
+  defaultOrder: "Standardreihenfolge",
+  // "Ascending"
+  ascOrder: "Aufsteigend",
+  // "Descending"
+  descOrder: "Absteigend",
+  // "Show minor columns"
+  showMinorColumns: "Kleinere Spalten anzeigen",
+  // [Auto-translated] "Actions"
+  actionsColumn: "Aktionen",
+  // "Other items and comments"
+  otherCommentTitle: "Andere Punkte und Kommentare",
+  // "Show percentages"
+  showPercentages: "Prozentsätze anzeigen",
+  // "Hide percentages"
+  hidePercentages: "Prozentsätze ausblenden",
+  // [Auto-translated] "Export As..."
+  exportAs: "Exportieren als...",
+  // [Auto-translated] "PDF"
+  pdfDownloadCaption: "PDF",
+  // [Auto-translated] "Excel"
+  xlsxDownloadCaption: "Excel",
+  // [Auto-translated] "CSV"
+  csvDownloadCaption: "CSV",
+  // [Auto-translated] "Export as PDF"
+  pdfDownloadHint: "Export als PDF",
+  // [Auto-translated] "Export as Excel"
+  xlsxDownloadHint: "Export als Excel",
+  // [Auto-translated] "Export as CSV"
+  csvDownloadHint: "Export als CSV",
+  // "Download plot as a PNG file"
+  saveDiagramAsPNG: "Diagramm als PNG herunterladen",
+  // [Auto-translated] "response(s)"
+  responsesText: "Antwort(en)",
+  // [Auto-translated] "No data"
+  noData: "Keine Daten",
+  // [Auto-translated] "Select date range..."
+  selectDateRange: "Datumsbereich auswählen...",
+  // [Auto-translated] "Start date"
+  startDate: "Startdatum",
+  // [Auto-translated] "End date"
+  endDate: "Enddatum",
+  // [Auto-translated] "Include today"
+  includeToday: "Heute einbeziehen",
+  // [Auto-translated] "Custom"
+  reportingPeriodCustom: "Gepflogenheit",
+  // [Auto-translated] "Last 7 days"
+  reportingPeriodLast7days: "Letzte 7 Tage",
+  // [Auto-translated] "Last 14 days"
+  reportingPeriodLast14days: "Letzte 14 Tage",
+  // [Auto-translated] "Last 28 days"
+  reportingPeriodLast28days: "Letzte 28 Tage",
+  // [Auto-translated] "Last 30 days"
+  reportingPeriodLast30days: "Letzte 30 Tage",
+  // [Auto-translated] "Last week (starts Monday)"
+  reportingPeriodLastWeekMon: "Letzte Woche (beginnt am Montag)",
+  // [Auto-translated] "Last week (starts Sunday)"
+  reportingPeriodLastWeekSun: "Letzte Woche (beginnt am Sonntag)",
+  // [Auto-translated] "Last month"
+  reportingPeriodLastMonth: "Letzten Monat",
+  // [Auto-translated] "Last quarter"
+  reportingPeriodLastQuarter: "Letztes Quartal",
+  // [Auto-translated] "Last year"
+  reportingPeriodLastYear: "Letztes Jahr",
+  // [Auto-translated] "This week to date (starts Sunday)"
+  reportingPeriodWtdSun: "Diese Woche bis heute (beginnt am Sonntag)",
+  // [Auto-translated] "This week to date (starts Monday)"
+  reportingPeriodWtdMon: "Diese Woche bis heute (beginnt am Montag)",
+  // [Auto-translated] "This month to date"
+  reportingPeriodMtd: "Bis heute in diesem Monat",
+  // [Auto-translated] "This quarter to date"
+  reportingPeriodQtd: "Dieses Quartal bis heute",
+  // [Auto-translated] "This year to date"
+  reportingPeriodYtd: "Bis heute dieses Jahr",
+  // "Hide empty answers"
+  hideEmptyAnswers: "Leere Antworten ausblenden",
+  // "Show empty answers"
+  showEmptyAnswers: "Leere Antworten anzeigen",
+  // "All answers"
+  "topNValueText-1": "Alle Antworten",
+  // "Top 5 answers"
+  topNValueText5: "Top 5 Antworten",
+  // "Top 10 answers"
+  topNValueText10: "Top 10 Antworten",
+  // "Top 20 answers"
+  topNValueText20: "Top 20 Antworten",
+  // "Hide missing answers"
+  hideMissingAnswers: "Fehlende Antworten ausblenden",
+  // "Show missing answers"
+  showMissingAnswers: "Fehlende Antworten anzeigen",
+  // "Missing answers"
+  missingAnswersLabel: "Fehlende Antworten",
+  // "This question type is not visualized yet"
+  noVisualizerForQuestion: "Für diesen Fragetyp gibt es noch keine Visualisierung.",
+  // "There are no results yet"
+  noResults: "Es liegen noch keine Ergebnisse vor",
+  // "Per Values"
+  showPerValues: "Pro Wert",
+  // "Per Columns"
+  showPerColumns: "Pro Spalte",
+  // "Answer"
+  answer: "Antwort",
+  // "Correct answer: "
+  correctAnswer: "Korrekte Antwort: ",
+  // [Auto-translated] "Percentage"
+  percentage: "Prozentsatz",
+  // [Auto-translated] "Chart"
+  statistics_chart: "Diagramm",
+  // "Responses"
+  responses: "Antworten",
+  // [Auto-translated] "Total responses"
+  totalResponses: "Gesamtzahl der Antworten",
+  // [Auto-translated] "NPS"
+  visualizer_nps: "NPS",
+  // [Auto-translated] "Chart"
+  visualizer_boolean: "Diagramm",
+  // "Table"
+  visualizer_options: "Tabelle",
+  // [Auto-translated] "NPS"
+  npsScore: "NPS",
+  // "Promoters"
+  npsPromoters: "Promotoren",
+  // "Passives"
+  npsPassives: "Passive",
+  // "Detractors"
+  npsDetractors: "Detraktoren",
+  // [Auto-translated] "Category (X Axis)"
+  axisXSelectorTitle: "Kategorie (X-Achse)",
+  // [Auto-translated] "Legend (Series)"
+  axisYSelectorTitle: "Legend (Serie)",
+  // [Auto-translated] "Segments:"
+  axisXAlternativeSelectorTitle: "Segmente:",
+  // [Auto-translated] "Groups:"
+  axisYAlternativeSelectorTitle: "Gruppen:",
+  // [Auto-translated] "Not selected"
+  notSelected: "Nicht ausgewählt",
+  // [Auto-translated] "Secondary Y axis"
+  secondYAxisToggleTitle: "Zweite Y-Achse",
+  // [Auto-translated] "Select a data field..."
+  selectDataField: "Wähle ein Datenfeld aus...",
+  // [Auto-translated] "Default"
+  intervalMode_default: "Vorgabe",
+  // [Auto-translated] "Decades"
+  intervalMode_decades: "Dekaden",
+  // [Auto-translated] "Years"
+  intervalMode_years: "Jahre",
+  // [Auto-translated] "Quarters"
+  intervalMode_quarters: "Quartier",
+  // [Auto-translated] "Months"
+  intervalMode_months: "Monate",
+  // [Auto-translated] "Days"
+  intervalMode_days: "Tage",
+  // [Auto-translated] "Auto"
+  intervalMode_auto: "Auto",
+  // [Auto-translated] "Intervals:"
+  intervalModeTitle: "Intervalle:",
+  // [Auto-translated] "Show individual values"
+  noRunningTotals: "Einzelne Werte anzeigen",
+  // [Auto-translated] "Show running totals"
+  runningTotals: "Laufende Summen anzeigen",
+  // [Auto-translated] "Compare periods"
+  groupDateSeries: "Zeiträume vergleichen",
+  // [Auto-translated] "View timeline"
+  ungroupDateSeries: "Zeitleiste anzeigen",
+  // [Auto-translated] "None"
+  noneAggregateText: "Nichts",
+  // [Auto-translated] "Aggregate:"
+  selectAggregateText: "Aggregat:",
+  // [Auto-translated] "Year ends with"
+  groupedYearsAxisTitle: "Das Jahr endet mit",
+  // [Auto-translated] "Series {0}"
+  seriesListSeries: "Serie {0}",
+  // [Auto-translated] "Values"
+  seriesListValuesLabel: "Werte",
+  // [Auto-translated] "Remove"
+  seriesListRemove: "Entfernen",
+  // [Auto-translated] "Add Series"
+  seriesListAdd: "Serien hinzufügen",
+  // [Auto-translated] "Move to second axis"
+  seriesListMoveToSecondAxis: "Wechsel zur zweiten Achse",
+  // [Auto-translated] "Move to first axis"
+  seriesListMoveToFirstAxis: "Wechsel zur ersten Achse",
+  // [Auto-translated] "Count"
+  aggregationCount: "Graf",
+  // [Auto-translated] "Sum"
+  aggregationSum: "Summe",
+  // [Auto-translated] "Average"
+  aggregationAverage: "Durchschnitt",
+  // [Auto-translated] "Close"
+  close: "Schließen",
+  // [Auto-translated] "K"
+  thousandsSuffix: "Tsd",
+  // [Auto-translated] "M"
+  millionsSuffix: "Mio",
+  // [Auto-translated] "B"
+  billionsSuffix: "Mrd"
+};
+
+setupLocale({ localeCode: "de", strings: germanStrings, nativeName: "Deutsch" });

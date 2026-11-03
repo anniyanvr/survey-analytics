@@ -6,20 +6,17 @@ export class VisualizationMatrixDynamic extends VisualizationPanelDynamic {
   constructor(
     question: Question,
     data: Array<{ [index: string]: any }>,
-    options?: Object
+    options?: Object,
+    type?: string
   ) {
-    super(question, data, options);
-  }
-
-  public get name() {
-    return "matrixDynamic";
+    super(question, data, options, type || "matrixDynamic");
   }
 
   getQuestions() {
     const matrixdynamic: QuestionMatrixDropdownModel = <any>this.question;
     const visibleRows = matrixdynamic.visibleRows;
 
-    if (visibleRows.length === 0) return [];
+    if(visibleRows.length === 0) return [];
 
     return visibleRows[0].cells.map(c => c.question);
   }
@@ -27,5 +24,7 @@ export class VisualizationMatrixDynamic extends VisualizationPanelDynamic {
 
 VisualizationManager.registerVisualizer(
   "matrixdynamic",
-  VisualizationMatrixDynamic
+  VisualizationMatrixDynamic,
+  undefined,
+  "matrixdynamic"
 );

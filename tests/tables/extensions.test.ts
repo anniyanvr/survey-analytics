@@ -3,8 +3,14 @@ import { Tabulator, TabulatorRow } from "../../src/tables/tabulator";
 import { TableExtensions } from "../../src/tables/extensions/tableextensions";
 import { Details } from "../../src/tables/extensions/detailsextensions";
 import { TableRow } from "../../src/tables/table";
-import { DocumentHelper } from "../../src/utils";
+import { DocumentHelper } from "../../src/utils/documentHelper";
 import { QuestionLocation } from "../../src/tables/config";
+
+export * from "../../src/tables/extensions/headerextensions";
+export * from "../../src/tables/extensions/footerextensions";
+export * from "../../src/analytics-localization/german";
+export * from "../../src/analytics-localization/russian";
+export * from "../../src/analytics-localization/french";
 
 const json = {
   questions: [
@@ -25,6 +31,31 @@ const json = {
 const survey = new SurveyModel(json);
 const tabulator = new Tabulator(survey, [], null);
 (<any>TableExtensions).extensions["row"] = [];
+
+test("showcolumn dropdown has Select all / Clear selection", () => {
+  const survey = new SurveyModel({
+    elements: [
+      { type: "text", name: "q1", title: "Question 1" },
+      { type: "text", name: "q2", title: "Question 2" },
+    ]
+  });
+  const tabulator = new Tabulator(survey, []);
+  const showColumnExtension = TableExtensions.findExtension("header", "showcolumn");
+  const dropdown = showColumnExtension.render(tabulator, undefined) as HTMLElement;
+  const items = dropdown.querySelectorAll(".sa-action-dropdown-item");
+
+  expect(items[0].textContent).toBe("Clear selection");
+  expect(items[0].classList.contains("sa-action-dropdown-item--toggle-all")).toBe(true);
+  expect(items.length).toBe(3);
+
+  (items[0] as HTMLElement).click();
+  expect(tabulator.columns.every(column => !column.isVisible)).toBe(true);
+  expect(items[0].textContent).toBe("Select all");
+
+  (items[0] as HTMLElement).click();
+  expect(tabulator.columns.every(column => column.isVisible)).toBe(true);
+  expect(items[0].textContent).toBe("Clear selection");
+});
 
 test("registerExtension method", () => {
   var extension: any = {
@@ -134,7 +165,7 @@ test("check rendering extension with render's null return value", () => {
         document.createElement("extensionsContainer"),
         "header"
       );
-    } catch {
+    } catch{
       throw new Error("tried to append null child");
     }
   }).not.toThrow(Error);
@@ -152,4 +183,46 @@ test("render image in details", () => {
   const details = new Details(tabulator, tableRow, detailsTarget);
   details.open();
   expect(detailsTarget).toMatchSnapshot();
+});
+
+test("locale selector uses titles", () => {
+  const survey = new SurveyModel({ elements: [{ type: "signaturepad", name: "q1", title: { "default": "EnTitle", "de": "DeTitle" } }] });
+  const tabulator = new Tabulator(survey, []);
+  const changeLocaleHeaderExtension = TableExtensions.findExtension("header", "changelocale");
+  expect(changeLocaleHeaderExtension).toBeDefined();
+  const renderResult = changeLocaleHeaderExtension.render(tabulator, undefined) as HTMLSelectElement;
+  expect(renderResult.textContent).toBe("Change LocaleEnglishDeutsch");
+});
+
+test("locale selector uses native names for locales without analytics translations", async () => {
+  await import("survey-core/survey.i18n");
+  const survey = new SurveyModel({ elements: [{ type: "text", name: "q1", title: {
+    default: "T",
+    ru: "Tr",
+    fr: "Tf",
+    "zh-tw": "Tt",
+    "zh-cn": "Tc",
+    ko: "Tk",
+  } }] });
+  const tabulator = new Tabulator(survey, []);
+  const changeLocaleHeaderExtension = TableExtensions.findExtension("header", "changelocale");
+  const renderResult = changeLocaleHeaderExtension.render(tabulator, undefined) as HTMLElement;
+  // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+  expect(renderResult.textContent).toBe("Change LocaleEnglishРусскийFrançais繁體中文简体中文한국어");
+});
+
+test("changelocale respects disableLocaleSwitch", () => {
+  const survey = new SurveyModel({ elements: [{ type: "text", name: "q1", title: {
+    default: "Qd",
+    en: "Qe",
+    fr: "Qf",
+  } }] });
+  const tabulator = new Tabulator(survey, [], { disableLocaleSwitch: true } as any);
+  const changeLocaleExtension = TableExtensions.findExtension("header", "changelocale");
+
+  expect(changeLocaleExtension.render(tabulator, null)).toBe(null);
+
+  tabulator.options.disableLocaleSwitch = false;
+  expect(changeLocaleExtension.render(tabulator, null)).toBeDefined();
+  expect(changeLocaleExtension.render(tabulator, null).tagName).toBe("DIV");
 });

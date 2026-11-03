@@ -56,29 +56,32 @@ test("getSeriesLabels method", () => {
   expect(matrix.getSeriesLabels()).toEqual(matrixJson.rows);
 });
 
-test("getData method", () => {
-  expect(matrix.getData()).toEqual([
+test("getCalculatedValues method", async () => {
+  expect((await matrix.getCalculatedValues()).data).toEqual([
+    [0, 0, 0, 0, 2, 1],
+    [0, 0, 0, 1, 1, 1],
+  ]);
+});
+
+test("check getPercentages method", () => {
+  expect(matrix.getPercentages([
     [1, 1],
     [2, 1],
     [0, 1],
     [0, 0],
     [0, 0],
     [0, 0],
-  ].reverse());
-});
-
-test("check getPercentages method", () => {
-  expect(matrix.getPercentages()).toEqual([
-    [33, 33],
-    [67, 33],
-    [0, 33],
+  ].reverse())).toEqual([
+    [33.33, 33.33],
+    [66.67, 33.33],
+    [0, 33.33],
     [0, 0],
     [0, 0],
     [0, 0],
   ].reverse());
 });
 
-test("getPercentages percentagePrecision option", () => {
+test("getPercentages percentagePrecision option", async () => {
   const json = {
     "type": "matrix",
     "name": "m1",
@@ -129,29 +132,41 @@ test("getPercentages percentagePrecision option", () => {
   matrix.fromJSON(json);
 
   let matrixVizualizer = new Matrix(matrix, data, {});
+  let datasets = (await matrixVizualizer.getAnswersData()).datasets;
 
-  let percentages = matrixVizualizer.getPercentages();
+  let percentages = matrixVizualizer.getPercentages(datasets);
   let result = 0;
 
-  for (let index = 0; index < percentages.length; index++) {
-    result += percentages[index][0];
-  }
-
-  expect(result).toEqual(101);
-
-  matrixVizualizer = new Matrix(matrix, data, { percentagePrecision: 2 });
-
-  percentages = matrixVizualizer.getPercentages();
-  result = 0;
-
-  for (let index = 0; index < percentages.length; index++) {
+  for(let index = 0; index < percentages.length; index++) {
     result += percentages[index][0];
   }
 
   expect(result).toEqual(100.01);
+
+  matrixVizualizer = new Matrix(matrix, data, { percentagePrecision: 2 });
+  datasets = (await matrixVizualizer.getAnswersData()).datasets;
+
+  percentages = matrixVizualizer.getPercentages(datasets);
+  result = 0;
+
+  for(let index = 0; index < percentages.length; index++) {
+    result += percentages[index][0];
+  }
+
+  expect(result).toEqual(100.01);
+
+  matrixVizualizer = new Matrix(matrix, data, { percentagePrecision: 0 });
+  datasets = (await matrixVizualizer.getAnswersData()).datasets;
+
+  percentages = matrixVizualizer.getPercentages(datasets);
+  percentages.forEach(row => {
+    row.forEach(value => {
+      expect(value % 1).toEqual(0);
+    });
+  });
 });
 
-test("hide empty answers", () => {
+test("hide empty answers", async () => {
   const question = new QuestionMatrixModel("q1");
   question.columns = ["Morning", "Afternoon"];
   question.rows = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
@@ -171,14 +186,15 @@ test("hide empty answers", () => {
   ];
   var matrix = new Matrix(question, data);
   matrix.hideEmptyAnswers = true;
-  expect(matrix.getAnswersData()).toEqual({
-    colors: ["#86e1fb", "#3999fb"],
+  expect(await matrix.getAnswersData()).toEqual({
+    colors: ["#84CAD4", "#3A99FB"],
     datasets: [
       [2, 0],
       [0, 2],
     ].reverse(),
-    labels: ["Morning", "Afternoon"].reverse(),
-    seriesLabels: ["Monday", "Tuesday"],
+    labels: ["Monday", "Tuesday"],
+    values: ["Monday", "Tuesday"],
+    seriesLabels: ["Morning", "Afternoon"].reverse(),
     texts: [
       [2, 0],
       [0, 2],
@@ -198,11 +214,12 @@ test("hide empty answers", () => {
   ];
   var matrix = new Matrix(question, data);
   matrix.hideEmptyAnswers = true;
-  expect(matrix.getAnswersData()).toEqual({
-    colors: ["#86e1fb"],
+  expect(await matrix.getAnswersData()).toEqual({
+    colors: ["#84CAD4", "#3A99FB"],
     datasets: [[1, 1]],
-    labels: ["Afternoon"],
-    seriesLabels: ["Monday", "Tuesday"],
+    labels: ["Monday", "Tuesday"],
+    values: ["Monday", "Tuesday"],
+    seriesLabels: ["Afternoon"],
     texts: [[1, 1]],
   });
 });
@@ -211,3 +228,4 @@ test("SupportMissingAnswers", () => {
   expect(matrix["isSupportMissingAnswers"]()).toBeFalsy();
   expect(matrix.showMissingAnswers).toBeFalsy();
 });
+

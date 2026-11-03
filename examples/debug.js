@@ -5,16 +5,16 @@ var survey = new Survey.SurveyModel(json);
 
 var data = [];
 
-var visPanel = new SurveyAnalytics.VisualizationPanel(
+var visPanel = new SurveyAnalyticsPlotly.VisualizationPanel(
   survey.getAllQuestions(),
   data,
   {
-    allowChangeAnswersOrder: true,
+    allowSortAnswers: true,
     allowShowPercentages: true,
     allowHideEmptyAnswers: false,
     allowTransposeData: false,
     allowTopNAnswers: true,
   }
 );
-visPanel.showHeader = true;
+visPanel.showToolbar = true;
 visPanel.render(document.getElementById("summaryContainer"));

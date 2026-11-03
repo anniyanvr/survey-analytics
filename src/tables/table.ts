@@ -1,4 +1,5 @@
-import { SurveyModel, Question, Event, settings, QuestionSelectBase, QuestionMatrixModel, ItemValue, JsonError } from "survey-core";
+import { SurveyModel, Question, Event, Serializer, EventBase, surveyLocalization } from "survey-core";
+import { hasLicense } from "survey-core";
 import {
   IPermission,
   QuestionLocation,
@@ -8,59 +9,53 @@ import {
 } from "./config";
 import { Details } from "./extensions/detailsextensions";
 import { localization } from "../localizationManager";
-import { TableExtensions } from "./extensions/tableextensions";
-import { createCommercialLicenseLink, createImagesContainer, createLinksContainer, DocumentHelper } from "../utils";
+import { ITableExtension, TableExtensions } from "./extensions/tableextensions";
+import { createCommercialLicenseLink } from "../utils";
 import { ColumnsBuilderFactory } from "./columnbuilder";
 import { DefaultColumn } from "./columns";
+import { ITableOptions, ITable } from "./table-interfaces";
 
-export interface ITableOptions {
-  [index: string]: any;
+export type TabulatorFilter = { field: string, type: string, value: any };
+export type TabulatorSortOrder = { field: string, direction: undefined | "asc" | "desc" };
+export type GetDataUsingCallbackFn = (params: { filter?: Array<TabulatorFilter>, sort?: Array<TabulatorSortOrder>, offset?: number, limit?: number, callback?: (response: { data: Array<Object>, totalCount: number, error?: any }) => void }) => void;
+export type GetDataUsingPromiseFn = (params: { filter?: Array<TabulatorFilter>, sort?: Array<TabulatorSortOrder>, offset?: number, limit?: number }) => Promise<{ data: Array<Object>, totalCount: number, error?: any }>;
+export type GetDataFn = GetDataUsingCallbackFn | GetDataUsingPromiseFn;
+// export type GetDataFn = (params: { filter?: any, limit?: number, offset?: number, callback?: (response: { data: Array<Object>, total: number, error?: any }) => void }) => Promise<{ data: Array<Object>, total: number, error?: any }> | void;
 
-  /**
-   * Set this property to true to render column headings using question names
-   */
-  useNamesAsTitles?: boolean;
-  /**
-   * Use this event to change the display value of question in table.
-   * <br/> `sender` - the table object that fires the event.
-   * <br/> `options.question` - the question obect for which event is fired.
-   * <br/> `options.displayValue` - the question display value. You can change this option before it is displayed in the table.
-   */
-  onGetQuestionValue?: (options: {
-    question: Question,
-    displayValue: any,
-  }) => void;
-}
+export class TableEvent extends EventBase<Table> {}
 
-export abstract class Table {
+export abstract class Table implements ITable {
   public static showFilesAsImages = false;
+  public getShowFilesAsImages(): boolean {
+    return Table.showFilesAsImages;
+  }
   public static haveCommercialLicense: boolean = false;
   protected tableData: any;
   protected extensions: TableExtensions;
   private haveCommercialLicense = false;
   protected _columns: Array<IColumn>;
+  private _columnsByName: Map<string, IColumn> | null = null;
   constructor(
     protected _survey: SurveyModel,
-    protected data: Array<Object>,
+    protected data: Array<Object> | GetDataFn,
     protected _options: ITableOptions = {},
     protected _columnsData: Array<IColumnData> = []
   ) {
     if(!this._options) {
       this._options = {};
     }
-
-    this._columns = this.buildColumns(_survey);
-    this.initTableData(data);
-    localization.currentLocale = this._survey.locale;
-    this._columns = this.buildColumns(_survey);
-
-    if(_columnsData.length !== 0) {
-      this.updateColumnsFromData(this._columnsData);
+    if(typeof this._options.useNestedTables === "undefined") {
+      this._options.useNestedTables = true;
+    }
+    if(typeof this._options.matrixDropdownDetailRowThreshold === "undefined") {
+      this._options.matrixDropdownDetailRowThreshold = 5;
     }
 
-    this.extensions = new TableExtensions(this);
+    this.initialize();
 
-    this.haveCommercialLicense =
+    this.extensions = new TableExtensions(this);
+    const f = hasLicense;
+    this.haveCommercialLicense = (!!f && f(4)) ||
       Table.haveCommercialLicense ||
       (!!_options &&
         (typeof _options.haveCommercialLicense !== "undefined"
@@ -73,25 +68,34 @@ export abstract class Table {
   protected _rows: TableRow[] = [];
   protected isColumnReorderEnabled: boolean;
 
+  public isInitialized = false;
+  protected initialize(): void {
+    this.isInitialized = false;
+    this.currentPageSize = this.options.pageSize || 5;
+    this.currentPageNumber = 1;
+    this.setColumns(this.buildColumns(this._survey));
+    this.initTableData(this.data);
+    localization.currentLocale = this._survey.locale;
+
+    if(this._columnsData.length !== 0) {
+      this.updateColumnsFromData(this._columnsData);
+    }
+    this.isInitialized = true;
+  }
+
+  public getTableData(): Array<any> {
+    return [].concat(this.tableData || []);
+  }
   /**
    * Sets pagination selector content.
    */
   public paginationSizeSelector: number[] = [1, 5, 10, 25, 50, 100];
 
-  public onColumnsVisibilityChanged: Event<
-    (sender: Table, options: any) => any,
-    any
-  > = new Event<(sender: Table, options: any) => any, any>();
+  public onColumnsVisibilityChanged = new TableEvent();
 
-  public onColumnsLocationChanged: Event<
-    (sender: Table, options: any) => any,
-    any
-  > = new Event<(sender: Table, options: any) => any, any>();
+  public onColumnsLocationChanged = new TableEvent();
 
-  public onRowRemoved: Event<
-    (sender: Table, options: any) => any,
-    any
-  > = new Event<(sender: Table, options: any) => any, any>();
+  public onRowRemoved = new TableEvent();
 
   public renderDetailActions: (
     container: HTMLElement,
@@ -113,11 +117,11 @@ export abstract class Table {
   public abstract sortByColumn(columnName: string, direction: string): void;
 
   public render(targetNode: HTMLElement | string): void {
-    if (typeof targetNode === "string") {
+    if(typeof targetNode === "string") {
       targetNode = document.getElementById(targetNode);
     }
     targetNode.innerHTML = "";
-    if (!this.haveCommercialLicense) {
+    if(!this.haveCommercialLicense) {
       targetNode.appendChild(createCommercialLicenseLink());
     }
   }
@@ -150,7 +154,7 @@ export abstract class Table {
    */
   public setPageSize(value: number): void {
     this.currentPageSize = value;
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged();
   }
 
   public getCreatedRows(): TableRow[] {
@@ -168,17 +172,26 @@ export abstract class Table {
     return this._options && this._options.useNamesAsTitles === true;
   }
 
+  public get itemsDelimiter(): string {
+    return this._options && this._options.itemsDelimiter || ", ";
+  }
+
   protected buildColumns = (survey: SurveyModel) => {
     let columns: Array<IColumn> = [];
     this._survey.getAllQuestions().forEach((question: Question) => {
-      const builder = ColumnsBuilderFactory.Instance.getColumnsBuilder(question.getTemplate());
-      columns = columns.concat(builder.buildColumns(question, this));
+      if(!this.isNonValueQuestion(question)) {
+        const builder = ColumnsBuilderFactory.Instance.getColumnsBuilder(question.getTemplate());
+        columns = columns.concat(builder.buildColumns(question, this));
+      }
     });
     return columns;
   };
+  private isNonValueQuestion(question: Question): boolean {
+    return Serializer.isDescendantOf(question.getType(), "nonvalue");
+  }
 
   public isColumnVisible(column: IColumn) {
-    if (column.location !== QuestionLocation.Column) return false;
+    if(column.location !== QuestionLocation.Column) return false;
     return column.isVisible;
   }
 
@@ -187,31 +200,57 @@ export abstract class Table {
   }
 
   public set columns(columns: Array<IColumn>) {
-    this._columns = columns;
+    this.setColumns(columns);
     this.refresh(true);
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged();
   }
 
-  protected initTableData(data: Array<any>) {
-    this.tableData = (data || []).map((item) => {
-      var dataItem: any = {};
-      this._survey.data = item;
-      this._columns.forEach((column) => {
-        const opt = column.getCellData(this, item);
-        if (typeof this._options.onGetQuestionValue === "function") {
-          this._options.onGetQuestionValue(opt);
-        }
-        dataItem[column.name] = opt.displayValue;
-      });
+  protected setColumns(columns: Array<IColumn>): void {
+    this._columns = columns;
+    this.invalidateColumnsByNameCache();
+  }
 
-      return dataItem;
+  protected invalidateColumnsByNameCache(): void {
+    this._columnsByName = null;
+  }
+
+  private isInitTableDataProcessingValue: boolean;
+  public get isInitTableDataProcessing(): boolean { return this.isInitTableDataProcessingValue; }
+  protected initTableData(data: Object[] | GetDataFn): void {
+    if(!Array.isArray(data)) {
+      this.tableData = undefined;
+      return;
+    }
+    this.isInitTableDataProcessingValue = true;
+    this.tableData = (data || []).map((item) => this.processLoadedDataItem(item));
+    this.isInitTableDataProcessingValue = false;
+  }
+  protected processLoadedDataItem(item: any): any {
+    var dataItem: any = {};
+    // clear previous row values: assigning survey.data merges, which leaks values (e.g. nested questions) into rows that lack them
+    this._survey.setDataCore(item, true);
+    // setDataCore does not refresh nested questions (e.g. inside choice items), update them explicitly
+    const questions = this._survey.getAllQuestions();
+    this._survey.getAllQuestions(false, false, true).forEach((question) => {
+      // skip questions whose values are owned by a parent question (e.g. inside composite questions)
+      if(questions.indexOf(question) < 0 && (<any>question).data === this._survey) {
+        question.updateValueFromSurvey(this._survey.getValue(question.getValueName()), true);
+      }
     });
+    this._columns.forEach((column) => {
+      const opt = column.getCellData(this, item);
+      if(typeof this._options.onGetQuestionValue === "function") {
+        this._options.onGetQuestionValue(opt);
+      }
+      dataItem[column.name] = opt.displayValue;
+    });
+    return dataItem;
   }
 
   public moveColumn(from: number, to: number) {
     var deletedColumns = this._columns.splice(from, 1);
     this._columns.splice(to, 0, deletedColumns[0]);
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged();
   }
 
   public setColumnLocation(columnName: string, location: QuestionLocation) {
@@ -220,11 +259,17 @@ export abstract class Table {
       columnName: columnName,
       location: location,
     });
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged();
   }
 
   public getColumnByName(columnName: string): IColumn {
-    return this._columns.filter((column) => column.name === columnName)[0];
+    if(!this._columnsByName) {
+      this._columnsByName = new Map<string, IColumn>();
+      for(const column of this._columns) {
+        this._columnsByName.set(column.name, column);
+      }
+    }
+    return this._columnsByName.get(columnName);
   }
 
   public setColumnVisibility(columnName: string, isVisible: boolean) {
@@ -234,13 +279,35 @@ export abstract class Table {
       columnName: columnName,
       columnVisibility: isVisible,
     });
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged();
+  }
+
+  public hideAllColumns(): void {
+    this.setAllColumnsVisibility(false);
+  }
+
+  public showAllColumns(): void {
+    this.setAllColumnsVisibility(true);
+  }
+
+  protected setAllColumnsVisibility(isVisible: boolean): void {
+    this.lockStateChanged();
+    try {
+      this._columns.forEach((column) => {
+        if(column.isVisible !== isVisible) {
+          this.setColumnVisibility(column.name, isVisible);
+        }
+      });
+    } finally {
+      this.unlockStateChanged();
+    }
+    this.stateChanged();
   }
 
   public setColumnWidth(columnName: string, width: string | number) {
     var column = this.getColumnByName(columnName);
     column.width = width;
-    this.onStateChanged.fire(this, this.state);
+    this.stateChanged();
   }
 
   public removeRow(row: TableRow): void {
@@ -263,7 +330,21 @@ export abstract class Table {
   public set locale(newLocale: string) {
     this._survey.locale = newLocale;
     localization.currentLocale = newLocale;
+    this.columns.forEach(c => c.displayName = undefined);
     this.refresh(true);
+    this.stateChanged();
+  }
+
+  private _lockStateChanged: boolean = false;
+  public lockStateChanged() {
+    this._lockStateChanged = true;
+  }
+  public unlockStateChanged() {
+    this._lockStateChanged = false;
+  }
+
+  protected stateChanged() {
+    if(this._lockStateChanged) return;
     this.onStateChanged.fire(this, this.state);
   }
 
@@ -271,17 +352,31 @@ export abstract class Table {
     return [].concat(this._survey.getUsedLocales());
   }
 
-  public refresh(hard: boolean = false) {
-    if (hard) {
-      this.initTableData(this.data);
-    }
-    if (this.isRendered) {
+  protected supportSoftRefresh() {
+    return false;
+  }
+
+  protected softRefresh() {
+    this.hardRefresh();
+  }
+
+  protected hardRefresh() {
+    this.initTableData(this.data);
+    if(this.isRendered) {
       this.currentPageNumber = this.getPageNumber();
       const targetNode = this.renderResult;
       this.destroy();
       this.render(targetNode);
       this.setPageSize(this.currentPageSize);
       this.setPageNumber(this.currentPageNumber);
+    }
+  }
+
+  public refresh(hard: boolean = false) {
+    if(hard || !this.supportSoftRefresh()) {
+      this.hardRefresh();
+    } else {
+      this.softRefresh();
     }
   }
 
@@ -297,7 +392,7 @@ export abstract class Table {
   }
 
   /**
-   * Vizualization panel state getter.
+   * Table state getter.
    */
   public get state(): ITableState {
     return {
@@ -307,21 +402,36 @@ export abstract class Table {
     };
   }
   /**
-   * Vizualization panel state setter.
+   * Table state setter.
    */
   public set state(newState: ITableState) {
-    if (!newState) return;
+    if(!newState) return;
 
-    if (typeof newState.locale !== "undefined") {
+    if(typeof newState.elements !== "undefined") {
+      this.updateColumnsFromData(newState.elements);
+    }
+
+    if(typeof newState.locale !== "undefined") {
       localization.currentLocale = newState.locale;
       this._survey.locale = newState.locale;
       this.initTableData(this.data);
     }
 
-    if (typeof newState.elements !== "undefined")
-      this.updateColumnsFromData(newState.elements);
-    if (typeof newState.pageSize !== "undefined")
+    if(typeof newState.pageSize !== "undefined") {
       this.currentPageSize = newState.pageSize;
+    }
+
+    this.refresh(true);
+  }
+  /**
+   * Resets table state.
+   * @since 2.3.5
+   */
+  public resetState(): void {
+    this._survey.locale = surveyLocalization.defaultLocale;
+    this.initialize();
+    this.refresh(true);
+    this.stateChanged();
   }
 
   private updateColumnsFromData(columnsData: Array<IColumnData>) {
@@ -342,16 +452,13 @@ export abstract class Table {
         columns.push(column);
       }
     });
-    this._columns = this._columns.sort((col1, col2) => col1.visibleIndex - col2.visibleIndex);
+    this.setColumns(this._columns.sort((col1, col2) => col1.visibleIndex - col2.visibleIndex));
   }
 
   /**
    * Fires when table state changed.
    */
-  public onStateChanged = new Event<
-    (sender: Table, options: any) => any,
-    any
-  >();
+  public onStateChanged = new TableEvent();
 
   /**
    * Gets table permissions.
@@ -370,13 +477,13 @@ export abstract class Table {
   public set permissions(permissions: IPermission[]) {
     const updatedElements = this._columns.map((column: IColumn) => {
       permissions.forEach((permission) => {
-        if (permission.name === column.name)
+        if(permission.name === column.name)
           column.isPublic = permission.isPublic;
       });
 
       return column;
     });
-    this._columns = [].concat(updatedElements);
+    this.setColumns([].concat(updatedElements));
     this.onPermissionsChangedCallback &&
       this.onPermissionsChangedCallback(this);
   }
@@ -385,6 +492,17 @@ export abstract class Table {
    * Fires when permissions changed
    */
   public onPermissionsChangedCallback: any;
+
+  protected get allowSorting(): boolean {
+    return this.options.allowSorting === undefined || this.options.allowSorting === true;
+  }
+
+  public allowExtension(extension: ITableExtension): boolean {
+    if(extension.location === "column" && extension.name === "sort") {
+      return this.allowSorting;
+    }
+    return true;
+  }
 }
 
 export abstract class TableRow {
@@ -403,8 +521,9 @@ export abstract class TableRow {
   private isDetailsExpanded = false;
   public onToggleDetails: Event<
     (sender: TableRow, options: any) => any,
+    TableRow,
     any
-  > = new Event<(sender: TableRow, options: any) => any, any>();
+  > = new Event<(sender: TableRow, options: any) => any, TableRow, any>();
 
   /**
    * Returns row's html element
@@ -442,7 +561,7 @@ export abstract class TableRow {
   }
 
   public toggleDetails() {
-    if (this.isDetailsExpanded) {
+    if(this.isDetailsExpanded) {
       this.closeDetails();
     } else this.openDetails();
   }
@@ -457,6 +576,7 @@ export abstract class TableRow {
 
   public remove(): void {
     this.table.removeRow(this);
+    this.destroy();
   }
 
   private onColumnLocationChangedCallback = () => {

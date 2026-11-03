@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.types.json",
+  "compilerOptions": {
+    "outDir": "build/survey-analytics-mongo.types/"
+  },
+  "include": [
+    "src/entries/mongo.ts"
+  ]
+}

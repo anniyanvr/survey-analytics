@@ -1,0 +1,965 @@
+import { SurveyModel } from "survey-core";
+import { PivotModel } from "../src/pivot";
+
+var json = {
+  "elements": [
+    {
+      "type": "radiogroup",
+      "name": "question1",
+      "title": "Sex",
+      "choices": [
+        "female",
+        "male"
+      ]
+    },
+    {
+      "type": "dropdown",
+      "name": "question2",
+      "title": "Item kind",
+      "choices": [
+        "Item 1",
+        "Item 2",
+        "Item 3"
+      ],
+    },
+    {
+      "type": "text",
+      "inputType": "number",
+      "name": "question3",
+      "title": "Bill amount",
+    }
+  ]
+};
+var data = [
+  { question1: "male", question2: "Item 1", question3: 100 },
+  { question1: "male", question2: "Item 1", question3: 200 },
+  { question1: "male", question2: "Item 2", question3: 300 },
+  { question1: "male", question2: "Item 3", question3: 400 },
+  { question1: "female", question2: "Item 2", question3: 500 },
+  { question1: "female", question2: "Item 2", question3: 600 },
+  { question1: "female", question2: "Item 2", question3: 100 },
+  { question1: "female", question2: "Item 3", question3: 200 },
+  { question1: "female", question2: "Item 3", question3: 300 },
+  { question1: "female", question2: "Item 3", question3: 400 },
+  { question1: "female", question2: "Item 3", question3: 150 },
+  { question1: "female", question2: "Item 1", question3: 250 },
+];
+
+var survey = new SurveyModel(json);
+
+test("default settings", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  expect(pivot["isSupportMissingAnswers"]()).toBeFalsy();
+  expect(pivot["isSupportAnswersOrder"]()).toBeFalsy();
+  expect(pivot.supportSelection).toBeFalsy();
+
+  const values = pivot.getValues();
+  const labels = pivot.getLabels();
+  const seriesValues = pivot.getSeriesValues();
+  const seriesLabels = pivot.getSeriesLabels();
+
+  expect(pivot.axisXQuestionName).toBe("question1");
+  expect(pivot.primaryYAxes).toStrictEqual([]);
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(labels).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual([]);
+  expect(seriesLabels).toStrictEqual([]);
+
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[8, 4]]);
+});
+
+test("getSeriesValues and getSeriesLabels + values and labels", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  let values = pivot.getValues();
+  let labels = pivot.getLabels();
+  let seriesValues = pivot.getSeriesValues();
+  let seriesLabels = pivot.getSeriesLabels();
+
+  expect(pivot.axisXQuestionName).toBe("question1");
+  expect(pivot.primaryYAxes).toStrictEqual([]);
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(labels).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual([]);
+  expect(seriesLabels).toStrictEqual([]);
+
+  pivot.setAxisQuestions("question2", "question1");
+
+  values = pivot.getValues();
+  labels = pivot.getLabels();
+  seriesValues = pivot.getSeriesValues();
+  seriesLabels = pivot.getSeriesLabels();
+
+  expect(pivot.axisXQuestionName).toBe("question2");
+  expect(pivot.primaryYAxes).toStrictEqual([{ dataName: "question1", valueName: "question1", aggregation: "count" }]);
+  expect(values).toStrictEqual(["Item 1", "Item 2", "Item 3"]);
+  expect(labels).toStrictEqual(["Item 1", "Item 2", "Item 3"]);
+  expect(seriesValues).toStrictEqual(["female", "male"]);
+  expect(seriesLabels).toStrictEqual(["female", "male"]);
+  expect(pivot.getSeriesValueIndexes()).toStrictEqual({
+    "question1_female": 0,
+    "question1_male": 1,
+  });
+});
+
+test("getCalculatedValues", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question1", "question2");
+  let values = pivot.getValues();
+  let seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual(["Item 1", "Item 2", "Item 3"]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[1, 2], [3, 1], [4, 1]]);
+
+  pivot.setAxisQuestions("question2", "question1");
+  values = pivot.getValues();
+  seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["Item 1", "Item 2", "Item 3"]);
+  expect(seriesValues).toStrictEqual(["female", "male"]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[1, 3, 4], [2, 1, 1]]);
+
+  pivot.setAxisQuestions("question1", "question3");
+  values = pivot.getValues();
+  seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual(["question3"]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[2500, 1000]]);
+
+  pivot.setAxisQuestions("question2", "question3");
+  values = pivot.getValues();
+  seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["Item 1", "Item 2", "Item 3"]);
+  expect(seriesValues).toStrictEqual(["question3"]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[550, 1500, 1450]]);
+
+  pivot.setAxisQuestions("question3", "question1");
+  values = pivot.getValues();
+  seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual([100, 150, 200, 250, 300, 350, 400, 450, 500, 550]);
+  expect(seriesValues).toStrictEqual(["female", "male"]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[1, 1, 1, 1, 1, 0, 1, 0, 1, 1], [1, 0, 1, 0, 1, 0, 1, 0, 0, 0]]);
+});
+
+test("getQuestionValueType", async () => {
+  const pivot = new PivotModel([], []);
+  expect(pivot.getQuestionValueType({ getType: () => "text" } as any)).toBe("number");
+  expect(pivot.getQuestionValueType({ getType: () => "text", inputType: "date" } as any)).toBe("date");
+  expect(pivot.getQuestionValueType({ getType: () => "text", inputType: "datetime" } as any)).toBe("date");
+  expect(pivot.getQuestionValueType({ getType: () => "rating" } as any)).toBe("number");
+  expect(pivot.getQuestionValueType({ getType: () => "expression" } as any)).toBe("number");
+  expect(pivot.getQuestionValueType({ getType: () => "range" } as any)).toBe("number");
+  expect(pivot.getQuestionValueType({ getType: () => "dropdown" } as any)).toBe("enum");
+  expect(pivot.getQuestionValueType({ getType: () => "radiogroup" } as any)).toBe("enum");
+  expect(pivot.getQuestionValueType({ getType: () => "boolean" } as any)).toBe("enum");
+  expect(pivot.getQuestionValueType({ getType: () => "checkbox" } as any)).toBe("enum");
+});
+
+test("getCalculatedValues multi-Y-axes", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  let values = pivot.getValues();
+  let seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual(["Item 1", "Item 2", "Item 3", "question3"]);
+  expect(pivot.getSeriesValueIndexes()).toStrictEqual({ "question2_Item 1": 0, "question2_Item 2": 1, "question2_Item 3": 2, "question3": 3 });
+  const calculatedValues = (await pivot.getCalculatedValues()).data;
+  expect(calculatedValues).toHaveLength(4);
+  expect(calculatedValues).toStrictEqual([[1, 2], [3, 1], [4, 1], [2500, 1000]]);
+});
+
+test("date value type handling", () => {
+  const dateJson = {
+    "elements": [
+      {
+        "type": "text",
+        "inputType": "date",
+        "name": "birthDate",
+        "title": "Birth Date"
+      }
+    ]
+  };
+  const dateData = [
+    { birthDate: "2020-01-01" },
+    { birthDate: "2020-02-01" },
+    { birthDate: "2020-03-01" }
+  ];
+  const dateSurvey = new SurveyModel(dateJson);
+  const pivot = new PivotModel(dateSurvey.getAllQuestions(), dateData);
+
+  expect(pivot.getValueType()).toBe("date");
+  expect(pivot.getContinuousValue("2020-01-01")).toBe(Date.parse("2020-01-01"));
+  expect(pivot.getString(Date.parse("2020-01-01"))).toMatch(/1\/1\/2020/);
+});
+
+test("continuous values and intervals", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question3", "question1");
+
+  const continuousValues = pivot["getContinuousValues"]();
+  expect(continuousValues.length).toBeGreaterThan(0);
+  expect(continuousValues[0]).toHaveProperty("original");
+  expect(continuousValues[0]).toHaveProperty("continuous");
+  expect(continuousValues[0]).toHaveProperty("row");
+
+  const intervals = pivot.intervals;
+  expect(intervals.length).toBe(PivotModel.IntervalsCount);
+  expect(intervals[0]).toHaveProperty("start");
+  expect(intervals[0]).toHaveProperty("end");
+  expect(intervals[0]).toHaveProperty("label");
+});
+
+test("rating question with rateValues", () => {
+  const ratingJson = {
+    "elements": [
+      {
+        "type": "rating",
+        "name": "satisfaction",
+        "title": "Satisfaction",
+        "rateValues": [
+          { value: 1, text: "Very Dissatisfied" },
+          { value: 2, text: "Dissatisfied" },
+          { value: 3, text: "Neutral" },
+          { value: 4, text: "Satisfied" },
+          { value: 5, text: "Very Satisfied" }
+        ]
+      }
+    ]
+  };
+  const ratingData = [
+    { satisfaction: 1 },
+    { satisfaction: 2 },
+    { satisfaction: 3 },
+    { satisfaction: 4 },
+    { satisfaction: 5 }
+  ];
+  const ratingSurvey = new SurveyModel(ratingJson);
+  const pivot = new PivotModel(ratingSurvey.getAllQuestions(), ratingData);
+
+  expect(pivot["needUseRateValues"]).toBe(true);
+  const intervals = pivot.intervals;
+  expect(intervals.length).toBe(5);
+  expect(intervals[0].label).toBe("Very Dissatisfied");
+  expect(intervals[0].start).toBe(1);
+  expect(intervals[0].end).toBe(2);
+});
+
+test("rating question without rateValues", () => {
+  const ratingJson = {
+    "elements": [
+      {
+        "type": "rating",
+        "name": "satisfaction",
+        "title": "Satisfaction",
+        "rateMin": 1,
+        "rateMax": 5,
+        "rateStep": 1
+      }
+    ]
+  };
+  const ratingData = [
+    { satisfaction: 1 },
+    { satisfaction: 2 },
+    { satisfaction: 3 },
+    { satisfaction: 4 },
+    { satisfaction: 5 }
+  ];
+  const ratingSurvey = new SurveyModel(ratingJson);
+  const pivot = new PivotModel(ratingSurvey.getAllQuestions(), ratingData);
+
+  expect(pivot["needUseRateValues"]).toBe(false);
+  const intervals = pivot.intervals;
+  expect(intervals.length).toBe(5);
+  expect(intervals[0].start).toBe(1);
+  expect(intervals[0].end).toBe(2);
+});
+
+test("custom intervals", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, {
+    question3: {
+      intervals: [
+        { start: 0, end: 200, label: "Low" },
+        { start: 200, end: 400, label: "Medium" },
+        { start: 400, end: 600, label: "High" }
+      ]
+    }
+  });
+  pivot.setAxisQuestions("question3", "question1");
+
+  expect(pivot.hasCustomIntervals).toBe(true);
+  const intervals = pivot.intervals;
+  expect(intervals.length).toBe(3);
+  expect(intervals[0].label).toBe("Low");
+  expect(intervals[1].label).toBe("Medium");
+  expect(intervals[2].label).toBe("High");
+});
+
+test("getSelectedItemByText with custom intervals", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, {
+    question3: {
+      intervals: [
+        { start: 0, end: 200, label: "Low" },
+        { start: 200, end: 400, label: "Medium" },
+        { start: 400, end: 600, label: "High" }
+      ]
+    }
+  });
+  pivot.setAxisQuestions("question3", "question1");
+
+  const selectedItem = pivot.getSelectedItemByText("Medium");
+  expect(selectedItem.value).toEqual({ start: 200, end: 400, label: "Medium" });
+  expect(selectedItem.text).toBe("Medium");
+});
+
+test("getSelectedItemByText with enum values", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  const selectedItem = pivot.getSelectedItemByText("female");
+  expect(selectedItem.value).toBe("female");
+  expect(selectedItem.text).toBe("female");
+});
+
+test("updateData resets cached values", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question3", "question1");
+
+  // Trigger caching
+  pivot["getContinuousValues"]();
+  expect(pivot["_cachedValues"]).toBeDefined();
+
+  const newData = [
+    { question1: "male", question2: "Item 1", question3: 100 },
+    { question1: "female", question2: "Item 2", question3: 200 }
+  ];
+
+  pivot.updateData(newData);
+  expect(pivot["_cachedValues"]).toBeUndefined();
+  expect(pivot["_continuousData"]).toBeUndefined();
+  expect(pivot["_cachedIntervals"]).toBeUndefined();
+});
+
+test("onDataChanged resets cached values", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question3", "question1");
+
+  // Trigger caching
+  pivot["getContinuousValues"]();
+  expect(pivot["_cachedValues"]).toBeDefined();
+
+  pivot["onDataChanged"]();
+  expect(pivot["_cachedValues"]).toBeUndefined();
+  expect(pivot["_continuousData"]).toBeUndefined();
+  expect(pivot["_cachedIntervals"]).toBeUndefined();
+});
+
+test("toPrecision method", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { intervalPrecision: 2 });
+  expect(pivot["_intervalPrecision"]).toBe(2);
+
+  const result = pivot["toPrecision"](3.14159);
+  expect(result).toBe(3.14);
+});
+
+test("updateStatisticsSeriesValue with enum values", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question1", "question2");
+
+  const statistics = [[0, 0], [0, 0], [0, 0]];
+  const dataRow = { question1: "female", question2: "Item 1" };
+  const valueIndex = 0;
+  const seriesValueIndexes = { "question2_Item 1": 0, "question2_Item 2": 1, "question2_Item 3": 2 };
+
+  pivot.updateStatisticsSeriesValue(statistics, dataRow, valueIndex, seriesValueIndexes);
+  expect(statistics[0][0]).toBe(1);
+});
+
+test("updateStatisticsSeriesValue with number values", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question1", "question3");
+
+  const statistics = [[0, 0]];
+  const dataRow = { question1: "female", question3: 100 };
+  const valueIndex = 0;
+  const seriesValueIndexes = { "question3": 0 };
+
+  pivot.updateStatisticsSeriesValue(statistics, dataRow, valueIndex, seriesValueIndexes);
+  expect(statistics[0][0]).toBe(100);
+});
+
+test("isSupportSoftUpdateContent", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  expect(pivot["isSupportSoftUpdateContent"]()).toBe(false);
+});
+
+test("setAxisQuestions with empty array", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  const originalAxisX = pivot.axisXQuestionName;
+
+  pivot.setAxisQuestions();
+  expect(pivot.axisXQuestionName).toBe(originalAxisX);
+});
+
+test("isXYChart method", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot["chartTypes"] = ["bar", "vbar", "line", "scatter", "pie", "doughnut"];
+
+  // Set chart type directly on the property
+  pivot.chartType = "bar";
+  expect(pivot["isXYChart"]()).toBe(true);
+
+  pivot.chartType = "pie";
+  expect(pivot["isXYChart"]()).toBe(false);
+
+  pivot.chartType = "doughnut";
+  expect(pivot["isXYChart"]()).toBe(false);
+});
+
+test("getValueType returns correct type", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  // Default should be enum
+  expect(pivot.getValueType()).toBe("enum");
+
+  // Set to number type
+  pivot.setAxisQuestions("question3", "question1");
+  expect(pivot.getValueType()).toBe("number");
+});
+
+test("getContinuousValue with different value types", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  // Test number type
+  pivot.setAxisQuestions("question3", "question1");
+  expect(pivot.getContinuousValue("100")).toBe(100);
+  expect(pivot.getContinuousValue(200)).toBe(200);
+
+  // Test date type
+  const datePivot = new PivotModel([], []);
+  datePivot["valueType"] = "date";
+  const dateValue = "2020-01-01";
+  expect(datePivot.getContinuousValue(dateValue)).toBe(Date.parse(dateValue));
+});
+
+test("getString with different value types", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  // Test number type
+  pivot.setAxisQuestions("question3", "question1");
+  expect(pivot.getString(100)).toBe("100");
+
+  // Test date type
+  const datePivot = new PivotModel([], []);
+  datePivot["valueType"] = "date";
+  const timestamp = Date.parse("2020-01-01");
+  expect(datePivot.getString(timestamp)).toMatch(/1\/1\/2020/);
+});
+
+test("setupPivot with non-existent question", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  const originalQuestion = pivot.question;
+  pivot.axisXQuestionName = "nonExistentQuestion";
+
+  pivot["setupPivot"]();
+
+  // Should not throw error and should handle gracefully
+  expect(pivot.question).toBe(originalQuestion);
+});
+
+test("getContinuousValues with enum type returns empty array", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  const continuousValues = pivot["getContinuousValues"]();
+  expect(continuousValues).toEqual([]);
+});
+
+test("getContinuousValues with number type processes data correctly", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question3", "question1");
+
+  const continuousValues = pivot["getContinuousValues"]();
+  expect(continuousValues.length).toBeGreaterThan(0);
+  expect(continuousValues[0]).toHaveProperty("original");
+  expect(continuousValues[0]).toHaveProperty("continuous");
+  expect(continuousValues[0]).toHaveProperty("row");
+
+  // Values should be sorted
+  for(let i = 1; i < continuousValues.length; i++) {
+    expect(continuousValues[i].continuous).toBeGreaterThanOrEqual(continuousValues[i - 1].continuous);
+  }
+});
+
+test("intervals with no continuous values", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), []);
+  pivot.setAxisQuestions("question3", "question1");
+
+  const intervals = pivot.intervals;
+  expect(intervals).toEqual([]);
+});
+
+test("getCalculatedValuesCore with empty data", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), []);
+  pivot.setAxisQuestions("question1", "question2");
+
+  const calculatedValues = pivot["getCalculatedValuesCore"]();
+  expect(calculatedValues.data).toEqual([[0, 0], [0, 0], [0, 0]]);
+});
+
+test("getCalculatedValuesCore with number type and no Y questions", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question3");
+
+  const calculatedValues = pivot["getCalculatedValuesCore"]().data;
+  expect(calculatedValues.length).toBe(1);
+  expect(calculatedValues[0].length).toBe(PivotModel.IntervalsCount);
+});
+
+test("getCalculatedValuesCore with number type and Y questions", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question3", "question1");
+
+  const calculatedValues = pivot["getCalculatedValuesCore"]().data;
+  expect(calculatedValues.length).toBe(2); // female, male
+  expect(calculatedValues[0].length).toBe(PivotModel.IntervalsCount);
+});
+
+test("getCalculatedValues for array in answer data", async () => {
+  const json = {
+    "pages": [
+      {
+        "name": "additional_info",
+        "title": "Additional Information",
+        "elements": [
+          {
+            "type": "checkbox",
+            "name": "income_sources",
+            "choices": [
+              "Salary / Wages",
+              "Business income",
+              "Pension / Retirement",
+              "Government assistance",
+              "Investments / Dividends"
+            ],
+            "showOtherItem": true,
+            "otherText": "Other (specify)"
+          }
+        ]
+      }
+    ],
+  };
+  const data = [
+    { "income_sources": ["Government assistance"] },
+    { "income_sources": ["other"] },
+    { "income_sources": ["other", "Pension / Retirement"] },
+    { "income_sources": ["Pension / Retirement", "Salary / Wages", "Government assistance"] },
+    { "income_sources": ["other"] },
+    { "income_sources": ["other", "Investments / Dividends", "Business income"] },
+    { "income_sources": ["Pension / Retirement"] },
+    { "income_sources": ["Business income", "other"] },
+    { "income_sources": ["Salary / Wages"] },
+    { "income_sources": ["other"] },
+    { "income_sources": ["Pension / Retirement"] },
+    { "income_sources": ["Government assistance", "Business income"] },
+    { "income_sources": ["Salary / Wages", "other", "Business income"] },
+    { "income_sources": ["Business income", "Government assistance", "Investments / Dividends"] },
+    { "income_sources": ["Salary / Wages"] },
+    { "income_sources": ["Investments / Dividends"] },
+    { "income_sources": ["Government assistance", "Business income"] },
+    { "income_sources": ["Government assistance"] },
+    { "income_sources": ["Investments / Dividends", "Government assistance"] },
+    { "income_sources": ["Investments / Dividends"] },
+    { "income_sources": ["Government assistance", "Business income"] },
+    { "income_sources": ["other"] },
+    { "income_sources": ["Government assistance"] },
+    { "income_sources": ["Salary / Wages", "other", "Business income"] },
+    { "income_sources": ["Business income", "Pension / Retirement", "Salary / Wages"] },
+    { "income_sources": ["Salary / Wages"] },
+    { "income_sources": ["Pension / Retirement", "Government assistance", "other"] },
+    { "income_sources": ["other", "Business income", "Salary / Wages"] },
+    { "income_sources": ["other", "Investments / Dividends", "Government assistance"] },
+    { "income_sources": ["Pension / Retirement", "Business income"] },
+    { "income_sources": ["Government assistance"] },
+    { "income_sources": ["other", "Pension / Retirement"] },
+    { "income_sources": ["Salary / Wages"] },
+    { "income_sources": ["Investments / Dividends", "Salary / Wages", "other"] },
+    { "income_sources": ["Government assistance"] },
+    { "income_sources": ["Salary / Wages"] },
+    { "income_sources": ["Pension / Retirement"] },
+    { "income_sources": ["Investments / Dividends"] },
+    { "income_sources": ["other", "Investments / Dividends"] },
+    { "income_sources": ["Salary / Wages", "Business income"] },
+    { "income_sources": ["Investments / Dividends", "Pension / Retirement", "Business income"] },
+    { "income_sources": ["other", "Salary / Wages", "Pension / Retirement"] },
+    { "income_sources": ["Salary / Wages", "Government assistance", "Business income"] },
+    { "income_sources": ["Business income", "other", "Pension / Retirement"] },
+    { "income_sources": ["Salary / Wages", "Business income"] },
+    { "income_sources": ["Investments / Dividends", "Government assistance"] },
+    { "income_sources": ["Salary / Wages", "other", "Government assistance"] },
+    { "income_sources": ["Salary / Wages", "other", "Business income"] },
+    { "income_sources": ["Pension / Retirement"] },
+    { "income_sources": ["Government assistance"] }
+  ];
+
+  const survey = new SurveyModel(json);
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("income_sources");
+  let values = pivot.getValues();
+  let seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["Salary / Wages", "Business income", "Pension / Retirement", "Government assistance", "Investments / Dividends", "other"]);
+  expect(seriesValues).toStrictEqual([]);
+  const result = (await pivot.getCalculatedValues()).data;
+  expect(result).toStrictEqual([[17, 17, 13, 17, 11, 19,]]);
+});
+
+test("getCalculatedValues with value aggregation", async () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question1", "question2");
+  let values = pivot.getValues();
+  let seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual(["Item 1", "Item 2", "Item 3"]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[1, 2], [3, 1], [4, 1]]);
+
+  pivot.primaryYAxes = [{
+    dataName: "question2",
+    valueName: "question3",
+    aggregation: "sum",
+  }];
+  pivot["setupPivot"]();
+  values = pivot.getValues();
+  seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual(["Item 1", "Item 2", "Item 3"]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[250, 300], [1200, 300], [1050, 400]]);
+
+  pivot.primaryYAxes = [];
+  pivot["setupPivot"]();
+  values = pivot.getValues();
+  seriesValues = pivot.getSeriesValues();
+  expect(values).toStrictEqual(["female", "male"]);
+  expect(seriesValues).toStrictEqual([]);
+  expect((await pivot.getCalculatedValues()).data).toStrictEqual([[8, 4]]);
+});
+
+test("useSecondaryYAxis clears secondaryYAxes when set to false and restores when set back to true", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+
+  pivot.secondaryYAxes.push(
+    { dataName: "question2", valueName: "question2", aggregation: "count" },
+    { dataName: "question3", valueName: "question3", aggregation: "sum" }
+  );
+  const stateBeforeOff = pivot.secondaryYAxes.map((axis) => ({ ...axis }));
+
+  expect(pivot.useSecondaryYAxis).toBe(true);
+  expect(pivot.secondaryYAxes).toHaveLength(2);
+
+  pivot.useSecondaryYAxis = false;
+  expect(pivot.useSecondaryYAxis).toBe(false);
+  expect(pivot.secondaryYAxes).toEqual([]);
+
+  pivot.useSecondaryYAxis = true;
+  expect(pivot.useSecondaryYAxis).toBe(true);
+  expect(pivot.secondaryYAxes).toHaveLength(2);
+  expect(pivot.secondaryYAxes).toStrictEqual(stateBeforeOff);
+});
+
+test("useSecondaryYAxis leaves secondaryYAxes empty when re-enabled if it was empty before disabling", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2");
+
+  expect(pivot.secondaryYAxes).toHaveLength(0);
+
+  pivot.useSecondaryYAxis = false;
+  expect(pivot.secondaryYAxes).toEqual([]);
+
+  pivot.useSecondaryYAxis = true;
+  expect(pivot.secondaryYAxes).toEqual([]);
+});
+
+test("movePrimaryItemToSecondary moves item from primary to secondary Y axis", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+
+  expect(pivot.primaryYAxes).toHaveLength(2);
+  expect(pivot.primaryYAxes[0].dataName).toBe("question2");
+  expect(pivot.primaryYAxes[1].dataName).toBe("question3");
+  expect(pivot.secondaryYAxes).toHaveLength(0);
+
+  pivot["movePrimaryItemToSecondary"](0);
+
+  expect(pivot.primaryYAxes).toHaveLength(1);
+  expect(pivot.primaryYAxes[0].dataName).toBe("question3");
+  expect(pivot.secondaryYAxes).toHaveLength(1);
+  expect(pivot.secondaryYAxes[0].dataName).toBe("question2");
+  expect(pivot.secondaryYAxes[0].aggregation).toBe("count");
+});
+
+test("movePrimaryItemToSecondary does nothing when index is out of range", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+
+  expect(pivot.primaryYAxes).toHaveLength(1);
+  expect(pivot.secondaryYAxes).toHaveLength(0);
+
+  pivot["movePrimaryItemToSecondary"](10);
+
+  expect(pivot.primaryYAxes).toHaveLength(1);
+  expect(pivot.secondaryYAxes).toHaveLength(0);
+});
+
+test("moveSecondaryItemToPrimary moves item from secondary to primary Y axis", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+  pivot["movePrimaryItemToSecondary"](0);
+
+  expect(pivot.primaryYAxes).toHaveLength(1);
+  expect(pivot.secondaryYAxes).toHaveLength(1);
+
+  pivot["moveSecondaryItemToPrimary"](0);
+
+  expect(pivot.primaryYAxes).toHaveLength(2);
+  expect(pivot.primaryYAxes[0].dataName).toBe("question3");
+  expect(pivot.primaryYAxes[1].dataName).toBe("question2");
+  expect(pivot.secondaryYAxes).toHaveLength(0);
+});
+
+test("moveSecondaryItemToPrimary does nothing when index is out of range", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.secondaryYAxes.push(
+    { dataName: "question2", valueName: "question2", aggregation: "count" }
+  );
+  pivot.secondaryYAxesSeriesListWidget.setItems(pivot.secondaryYAxes);
+
+  expect(pivot.primaryYAxes).toHaveLength(0);
+  expect(pivot.secondaryYAxes).toHaveLength(1);
+
+  pivot["moveSecondaryItemToPrimary"](5);
+
+  expect(pivot.primaryYAxes).toHaveLength(0);
+  expect(pivot.secondaryYAxes).toHaveLength(1);
+});
+
+test("moveToolbarItemsToSidebar: all toolbar items except changeChartType are moved to sidebar", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  const toolbarNames = Object.keys(pivot["toolbarItemCreators"]);
+  const sidebarNames = Object.keys(pivot["sideBarItemCreators"]);
+
+  expect(toolbarNames).toEqual(["changeChartType"]);
+
+  const pivotSidebarItems = ["axisXSelector", "primaryYAxes", "secondaryYAxisBlock"];
+  pivotSidebarItems.forEach((name) => expect(sidebarNames).toContain(name));
+
+  const movedFromToolbar = [
+    "changeAnswersOrder",
+    "showPercentages",
+    "hideEmptyAnswers",
+    "topNAnswers",
+    "transposeData",
+    "showMissingAnswers",
+  ];
+  movedFromToolbar.forEach((name) => expect(sidebarNames).toContain(name));
+});
+
+test("getYAxisInfo returns single empty object when secondary Y axis is not used", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question1", "question2");
+
+  const result = pivot.getYAxisInfo();
+
+  expect(result).toHaveLength(1);
+  expect(result[0]).toEqual({});
+});
+
+test("getYAxisInfo returns single empty object when secondaryYAxes is empty", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2");
+
+  const result = pivot.getYAxisInfo();
+
+  expect(result).toHaveLength(1);
+  expect(result[0]).toEqual({});
+});
+
+test("getYAxisInfo returns two axis settings when secondary Y axis has series", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+  pivot["movePrimaryItemToSecondary"](0);
+
+  const result = pivot.getYAxisInfo() as Array<{ title?: { text: string }, opposite?: boolean, seriesName?: string[] }>;
+  expect(result).toHaveLength(2);
+
+  const [primary, secondary] = result;
+  expect(primary).toStrictEqual({
+    title: { text: "Bill amount" },
+    opposite: false,
+    seriesName: ["Bill amount"]
+  });
+  expect(secondary).toStrictEqual({
+    title: { text: "Item kind" },
+    opposite: true,
+    seriesName: ["Item 1", "Item 2", "Item 3"]
+  });
+});
+
+test("primaryYAxesSeriesListWidget renders movePrimaryItemToSecondary button when useSecondaryYAxis is true", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+
+  const root = pivot.primaryYAxesSeriesListWidget.render();
+  const actionButtons = root.querySelectorAll(".sa-series-settings__action-button");
+  expect(actionButtons.length).toBeGreaterThan(0);
+});
+
+test("primaryYAxesSeriesListWidget does not render movePrimaryItemToSecondary button when useSecondaryYAxis is false", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+
+  const root = pivot.primaryYAxesSeriesListWidget.render();
+  const actionButtons = root.querySelectorAll(".sa-series-settings__action-button");
+  expect(actionButtons.length).toBe(0);
+});
+
+test("primaryYAxesSeriesListWidget hides movePrimaryItemToSecondary button after switching chart type to bar", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot["chartTypes"] = ["vbar", "bar", "line", "pie", "doughnut"];
+  pivot.chartType = "vbar";
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+
+  let primaryYAxesElement = pivot.primaryYAxesSeriesListWidget.render();
+  const buttonsBefore = primaryYAxesElement.querySelectorAll(".sa-series-settings__action-button");
+  expect(buttonsBefore.length).toBeGreaterThan(0);
+
+  pivot.chartType = "bar";
+
+  primaryYAxesElement = pivot.primaryYAxesSeriesListWidget.render();
+  const buttonsAfter = primaryYAxesElement.querySelectorAll(".sa-series-settings__action-button");
+  expect(buttonsAfter.length).toBe(0);
+});
+
+test("IPivotVisualizerOptions and IPivotSeriesOptions interfaces", () => {
+  const pivotOptions = {
+    questions: survey.getAllQuestions(),
+    categoryField: "question1",
+    series: [
+      {
+        seriesField: "question2",
+        valueField: "question3",
+        aggregation: "sum"
+      },
+      {
+        seriesField: "question2",
+        aggregation: "count",
+        yAxis: "secondary"
+      }
+    ],
+    useSecondaryYAxis: true
+  } as any;
+  const pivot = new PivotModel(survey.getAllQuestions(), data, pivotOptions);
+  expect(pivot.axisXQuestionName).toBe("question1");
+
+  expect(pivot.series).toHaveLength(2);
+  expect(pivot.series[0].seriesField).toBe("question2");
+  expect(pivot.series[0].valueField).toBe("question3");
+  expect(pivot.series[0].aggregation).toBe("sum");
+  expect(pivot.series[0].yAxis).toBe("primary");
+  expect(pivot.series[1].seriesField).toBe("question2");
+  expect(pivot.series[1].aggregation).toBe("count");
+  expect(pivot.series[1].yAxis).toBe("secondary");
+
+  expect(pivot.primaryYAxes).toHaveLength(1);
+  expect(pivot.primaryYAxes[0].dataName).toBe("question2");
+  expect(pivot.primaryYAxes[0].valueName).toBe("question3");
+  expect(pivot.primaryYAxes[0].aggregation).toBe("sum");
+  expect(pivot.secondaryYAxes).toHaveLength(1);
+  expect(pivot.secondaryYAxes[0].dataName).toBe("question2");
+  expect(pivot.secondaryYAxes[0].valueName).toBe("question2");
+  expect(pivot.secondaryYAxes[0].aggregation).toBe("count");
+});
+
+test("Pivot series saved to state and restored correctly", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  pivot.setAxisQuestions("question1", "question2", "question3");
+  pivot.primaryYAxesSeriesListWidget.setItems(pivot.primaryYAxes);
+  pivot["movePrimaryItemToSecondary"](0);
+  pivot.series[0].aggregation = "sum";
+
+  const state = pivot.getState();
+  expect(state).toStrictEqual({
+    chartType: "bar",
+    categoryField: "question1",
+    series: [
+      {
+        seriesField: "question3",
+        aggregation: "sum",
+        yAxis: "primary"
+      },
+      {
+        seriesField: "question2",
+        aggregation: "count",
+        yAxis: "secondary"
+      }
+    ]
+  });
+  const newPivot = new PivotModel(survey.getAllQuestions(), data, { useSecondaryYAxis: true } as any);
+  newPivot.setState(state);
+  expect(newPivot.series).toEqual(pivot.series);
+});
+
+test("getChartAxisSetting returns empty object when axisDescription is null", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  expect(pivot.getChartAxisSetting(null, [], false)).toEqual({});
+  expect(pivot.getChartAxisSetting(undefined, [], true)).toEqual({});
+});
+
+test("getChartAxisSetting title text is the question title matched by dataName", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  const result = pivot.getChartAxisSetting(
+    { dataName: "question2", valueName: undefined, aggregation: "count" },
+    ["Item 1", "Item 2"],
+    false
+  );
+
+  expect(result.title.text).toBe("Item kind");
+});
+
+test("getChartAxisSetting title text is empty string when question is not found", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+
+  const result = pivot.getChartAxisSetting(
+    { dataName: "nonExistent", valueName: "alsoNonExistent", aggregation: "count" },
+    [],
+    false
+  );
+
+  expect(result.title.text).toBe("");
+});
+
+test("getChartAxisSetting opposite flag is set correctly", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  const axis = { dataName: "question1", valueName: "question1", aggregation: "count" };
+
+  expect(pivot.getChartAxisSetting(axis, [], false).opposite).toBe(false);
+  expect(pivot.getChartAxisSetting(axis, [], true).opposite).toBe(true);
+});
+
+test("getChartAxisSetting seriesName contains provided series labels", () => {
+  const pivot = new PivotModel(survey.getAllQuestions(), data);
+  const labels = ["female", "male"];
+
+  const result = pivot.getChartAxisSetting(
+    { dataName: "question1", valueName: "question1", aggregation: "count" },
+    labels,
+    false
+  );
+
+  expect(result.seriesName).toEqual(["female", "male"]);
+});

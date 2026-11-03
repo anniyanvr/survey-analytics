@@ -1,21 +1,22 @@
-import { Question } from "survey-core";
-import { VisualizerBase } from "./visualizerBase";
+import { Question, QuestionMultipleTextModel } from "survey-core";
+import { ICalculationResult, VisualizerBase } from "./visualizerBase";
 import { VisualizationManager } from "./visualizationManager";
 import { localization } from "./localizationManager";
-import { DocumentHelper } from "./utils";
+import { DocumentHelper } from "./utils/documentHelper";
+import { getNestedDataRows } from "./statisticCalculators";
 
-var styles = require("./text.scss");
+import "./text.scss";
 
 export class TextTableAdapter {
   constructor(private model: Text) {}
 
-  public create(container: HTMLElement) {
-    const { columnsCount, data } = this.model.getData();
-    const emptyTextNode = <HTMLElement>DocumentHelper.createElement("p", "", {
-      innerText: localization.getString("noResults"),
-    });
+  public async create(container: HTMLElement): Promise<void> {
+    const answersData = await this.model.getAnswersData();
 
-    if (data.length === 0) {
+    if(answersData.datasets.length === 0 || answersData.datasets[0].length === 0) {
+      var emptyTextNode = DocumentHelper.createElement("p", "sa-no-result", {
+        innerText: localization.getString("noResults"),
+      });
       container.appendChild(emptyTextNode);
       return;
     }
@@ -24,13 +25,24 @@ export class TextTableAdapter {
       DocumentHelper.createElement("table", "sa-text-table")
     );
 
-    tableNode.style.backgroundColor = this.model.backgroundColor;
     container.appendChild(tableNode);
 
-    data.forEach((rowData) => {
+    if(this.model.columns && this.model.columns.length > 0) {
       var row = DocumentHelper.createElement("tr");
-      for (var i = 0; i < columnsCount; i++) {
-        var td = DocumentHelper.createElement("td", "sa-text-table__cell", {
+      this.model.columns.forEach(column => {
+        var td = DocumentHelper.createElement("th", "sa-text-table__cell", {
+          textContent: column.title,
+        });
+        row.appendChild(td);
+      });
+      tableNode.appendChild(row);
+    }
+
+    answersData.datasets.forEach((rowData) => {
+      var row = DocumentHelper.createElement("tr");
+      for(var i = 0; i < answersData.seriesLabels.length; i++) {
+        const column = this.model.columns[i];
+        var td = DocumentHelper.createElement("td", "sa-text-table__cell" + (column?.type == "number" ? " sa-text-table__cell--number" : ""), {
           textContent: rowData[i],
         });
         row.appendChild(td);
@@ -54,39 +66,58 @@ export class Text extends VisualizerBase {
     question: Question,
     data: Array<{ [index: string]: any }>,
     options?: Object,
-    name?: string
+    type?: string
   ) {
-    super(question, data, options, name || "text");
+    super(question, data, options, type || "text");
     this._textTableAdapter = new TextTableAdapter(this);
   }
 
-  getData() {
-    let result: Array<Array<string>> = [];
-    let columnsCount = 0;
+  public get columns(): Array<{ name: string, title: string, type: string }> {
+    const columns = [];
+    if(this.dataType == "multipletext") {
+      (this.question as QuestionMultipleTextModel).items.forEach(item => {
+        columns.push({ name: item.name, title: item.title, type: item.inputType });
+      });
+    }
+    return columns;
+  }
 
-    this.data.forEach((row) => {
-      const rowValue: any = row[this.question.name];
-      const dataStrings: Array<string> = [];
-      if (!!rowValue) {
-        if (Array.isArray(rowValue)) {
-          dataStrings.concat(rowValue);
-        } else {
-          if (typeof rowValue === "object") {
-            Object.keys(rowValue).forEach((key) =>
-              dataStrings.push(rowValue[key])
-            );
+  public getValues(): Array<any> {
+    return [];
+  }
+
+  protected getCalculatedValuesCore(): ICalculationResult {
+    let result: Array<Array<string>> = [];
+    let columnCount = 0;
+
+    this.surveyData.forEach((dataRow) => {
+      const nestedDataRows = getNestedDataRows(dataRow, this.dataPath);
+      nestedDataRows.forEach(row => {
+        const rowValue: any = row[this.question.name];
+        let dataStrings: Array<string> = [];
+        if(!!rowValue) {
+          if(Array.isArray(rowValue)) {
+            dataStrings = dataStrings.concat(rowValue);
           } else {
-            dataStrings.push(rowValue);
+            if(typeof rowValue === "object") {
+              Object.keys(rowValue).forEach((key) =>
+                dataStrings.push(rowValue[key])
+              );
+            } else {
+              dataStrings.push(rowValue);
+            }
+          }
+          result.push(dataStrings);
+          if(dataStrings.length > columnCount) {
+            columnCount = dataStrings.length;
           }
         }
-        result.push(dataStrings);
-        if (dataStrings.length > columnsCount) {
-          columnsCount = dataStrings.length;
-        }
-      }
+      });
     });
 
-    return { columnsCount, data: result };
+    const series = [];
+    series.length = columnCount;
+    return { data: result as any, values: [], series };
   }
 
   protected destroyContent(container: HTMLElement) {
@@ -94,9 +125,12 @@ export class Text extends VisualizerBase {
     super.destroyContent(container);
   }
 
-  protected renderContent(container: HTMLElement) {
-    this._textTableAdapter.create(container);
-    this.afterRender(this.contentContainer);
+  protected async renderContentAsync(container: HTMLElement) {
+    const tableNode: HTMLElement = DocumentHelper.createElement("div");
+    await this._textTableAdapter.create(tableNode);
+    container.innerHTML = "";
+    container.appendChild(tableNode);
+    return container;
   }
 
   destroy() {
@@ -105,6 +139,6 @@ export class Text extends VisualizerBase {
   }
 }
 
-VisualizationManager.registerVisualizer("text", Text);
-VisualizationManager.registerVisualizer("comment", Text);
-VisualizationManager.registerVisualizer("multipletext", Text);
+VisualizationManager.registerVisualizer("text", Text, undefined, "text");
+VisualizationManager.registerVisualizer("comment", Text, undefined, "text");
+VisualizationManager.registerVisualizer("multipletext", Text, undefined, "text");

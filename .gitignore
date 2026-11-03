@@ -1,6 +1,6 @@
 .git/*
+/node_modules/
 node_modules/*
-src/**/*.js
 doc_generator/**/*.json
 docs/classes.json
 docs/pmes.json
@@ -8,7 +8,8 @@ tmp/*
 *.cmd
 .tsdrc
 .idea
-/packages/**/*
+/build/
+/build/**/*
 /.gitattributes
 project.json
 /lib_typings
@@ -30,4 +31,14 @@ Gemfile.lock
 /doc_generator/*.json
 /src/svgbundle.html
 *.env
+/coverage/
 coverage/**/*
+junit.xml
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/tests-examples/
+/promts/

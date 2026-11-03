@@ -1,12 +1,12 @@
 {
-  "Categories": [
+  "Items": [
     {
       "Name": "overview",
-      "Title": "SurveyJS Analytics Overview"
+      "Title": "Overview"
     },
     {
       "Name": "get-started",
-      "Title": "Get Started with Survey Analytics",
+      "Title": "Get Started",
       "Items": [
         {
           "Name": "get-started-angular",
@@ -21,34 +21,127 @@
           "Title": "React"
         },
         {
-          "Name": "get-started-knockout-jquery",
-          "Title": "Knockout / jQuery"
+          "Name": "get-started-html-css-javascript",
+          "Title": "HTML/CSS/JavaScript"
+        },
+        {
+          "Name": "supported-browsers",
+          "Title": "Supported Browsers"
         }
       ]
     },
     {
-      "Name": "api",
-      "Title": "Analytics API",
+      "Name": "chart-types",
+      "Title": "Chart Types"
+    },
+    {
+      "Name": "interactive-features",
+      "Title": "Interactive UI Features",
       "Items": [
         {
-          "Name": "visualizerbase",
-          "Title": "Base Visualization Element"
+          "Name": "date-range-filtering",
+          "Title": "Date Range Filtering"
+        },
+        {
+          "Name": "cross-filtering",
+          "Title": "Cross-Filtering"
+        },
+        {
+          "Name": "sorting",
+          "Title": "Sorting"
+        },
+        {
+          "Name": "visualization-type-selection",
+          "Title": "Visualization Type Selection"
+        },
+        {
+          "Name": "legend-based-series-toggling",
+          "Title": "Legend-Based Series Toggling"
+        },
+        {
+          "Name": "dynamic-layout-management",
+          "Title": "Dynamic Layout Management"
+        }
+      ]
+    },
+    {
+      "Name": "set-up-table-view",
+      "Title": "Table View for Survey Results",
+      "Items": [
+        {
+          "Name": "set-up-table-view-angular",
+          "Title": "Angular"
+        },
+        {
+          "Name": "set-up-table-view-vue",
+          "Title": "Vue"
+        },
+        {
+          "Name": "set-up-table-view-react",
+          "Title": "React"
+        },
+        {
+          "Name": "set-up-table-view-html-css-javascript",
+          "Title": "HTML/CSS/JavaScript"
+        }
+      ]
+    },
+    {
+      "Name": "localization",
+      "Title": "Localization & Globalization"
+    },
+    {
+      "Name": "integration-with-plotlyjs",
+      "Title": "Integration with Plotly.js"
+    },
+    {
+      "Name": "api-reference",
+      "Title": "Dashboard API",
+      "UseInPath": true,
+      "Items": [
+        {
+          "Name": "dashboard",
+          "Title": "Dashboard"
+        },
+        {
+          "Name": "idashboardoptions",
+          "Title": "IDashboardOptions"
+        },
+        {
+          "Name": "dashboarditem",
+          "Title": "DashboardItem"
+        },
+        {
+          "Name": "idashboarditemoptions",
+          "Title": "IDashboardItemOptions"
+        },
+        {
+          "Name": "ipivotvisualizeroptions",
+          "Title": "IPivotVisualizerOptions"
+        },
+        {
+          "Name": "ipivotseriesoptions",
+          "Title": "IPivotSeriesOptions"
         },
         {
           "Name": "visualizationpanel",
-          "Title": "Visualization Panel"
+          "Title": "VisualizationPanel (Obsolete)"
         },
         {
           "Name": "IVisualizationPanelOptions",
-          "Title": "IVisualizationPanelOptions"
+          "Title": "IVisualizationPanelOptions (Obsolete)"
+        },
+        {
+          "Name": "visualizerbase",
+          "Title": "VisualizerBase"
         },
         {
           "Name": "visualizationmanager",
-          "Title": "Visualizers Repository"
+          "Title": "VisualizationManager"
         },
         {
           "Name": "visualizerfactory",
-          "Title": "Visualizer Factory"
+          "Title": "VisualizerFactory"
         }
       ]
     }

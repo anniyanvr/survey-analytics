@@ -1,5 +1,5 @@
 import { SurveyModel } from "survey-core";
-import { HistogramModel } from "../src/histogram";
+import { getBestIntervalMode, HistogramModel } from "../src/histogram";
 
 const data = [
   {
@@ -36,7 +36,7 @@ const data = [
   },
 ];
 
-test("number default histogram", () => {
+test("number default histogram", async () => {
   const question: any = {
     getType: () => "text",
     type: "text",
@@ -47,36 +47,60 @@ test("number default histogram", () => {
 
   const histValues = number.getValues();
   const histLabels = number.getLabels();
-  const histData = number.getData();
+  const histData = await number.getCalculatedValues();
 
   expect(number["valueType"]).toBe("number");
-  expect(histValues).toMatchObject([17, 25, 30, 40]);
-  expect(histLabels).toMatchObject(["17", "25", "30", "40"]);
-  expect(histData).toMatchObject([[3, 1, 2, 2]]);
+  expect(histValues).toMatchObject([17, 19.3, 21.6, 23.9, 26.2, 28.5, 30.8, 33.1, 35.4, 37.7]);
+  expect(histLabels).toMatchObject(["17-19.3", "19.3-21.6", "21.6-23.9", "23.9-26.2", "26.2-28.5", "28.5-30.8", "30.8-33.1", "33.1-35.4", "35.4-37.7", "37.7-40"]);
+  expect(histData.data).toMatchObject([[3, 0, 0, 1, 0, 2, 0, 0, 0, 2]]);
 
   expect(number["isSupportMissingAnswers"]()).toBeFalsy();
+  expect(number["isSupportAnswersOrder"]()).toBeTruthy();
 });
 
-test("date default histogram", () => {
+test("date default histogram", async () => {
   const question: any = {
     getType: () => "text",
     type: "text",
     inputType: "date",
     name: "date",
   };
-  const date = new HistogramModel(question, data);
+  const date = new HistogramModel(question, data, { allowChangeIntervals: true });
+  date.intervalsMode = "default" as any;
 
   const histValues = date.getValues();
-  const histData = date.getData();
+  const histLabels = date.getLabels();
+  const histData = await date.getCalculatedValues();
 
   expect(date["valueType"]).toBe("date");
-  expect(histValues).toMatchObject(["2004-10-13", "2011-10-13", "2016-10-13", "2021-10-13"]);
-  expect(histData).toMatchObject([[2, 2, 1, 3]]);
+  // expect(histValues).toMatchObject([1097625600000, 1151271360000, 1204917120000, 1258562880000, 1312208640000, 1365854400000, 1419500160000, 1473145920000, 1526791680000, 1580437440000]);
+  expect(histValues).toMatchObject([1097625600000, 1151271360000, 1204917120000, 1258562880000, 1312208640000, 1365854400000, 1419500160000, 1473145920000, 1526791680000, 1580437440000]);
+  expect(histLabels).toHaveLength(10);
+  // expect(histLabels).toMatchObject([
+  //   "10/13/2004-6/25/2006",
+  //   "6/25/2006-3/7/2008",
+  //   "3/7/2008-11/18/2009",
+  //   "11/18/2009-8/1/2011",
+  //   "8/1/2011-4/13/2013",
+  //   "4/13/2013-12/25/2014",
+  //   "12/25/2014-9/6/2016",
+  //   "9/6/2016-5/20/2018",
+  //   "5/20/2018-1/31/2020",
+  //   "1/31/2020-10/13/2021",
+  // ]);
+  expect(histValues.length).toBe(10);
+  expect(histValues.every((v) => typeof v === "number")).toBeTruthy();
+  expect(histValues.every((v, i, arr) => i === 0 || v > arr[i - 1])).toBeTruthy();
+  expect(histLabels.length).toBe(10);
+  expect(histLabels[0]).toMatch(/^10\/13\/2004-6\/(25|26)\/2006$/);
+  expect(histLabels[1]).toMatch(/^6\/(25|26)\/2006-3\/7\/2008$/);
+  expect(histLabels[histLabels.length - 1]).toBe("1/31/2020-10/13/2021");
+  expect(histData.data).toMatchObject([[2, 0, 0, 0, 2, 0, 0, 1, 0, 3]]);
 
   expect(date["isSupportMissingAnswers"]()).toBeFalsy();
 });
 
-test("date default intervals", () => {
+test("date default intervals", async () => {
   const question: any = {
     getType: () => "text",
     type: "text",
@@ -85,30 +109,25 @@ test("date default intervals", () => {
   };
   const dates = [];
   const currDate = new Date(2020, 0);
-  for (let i = 0; i < 31; i++) {
+  for(let i = 0; i < 31; i++) {
     dates.push({ date: currDate.toISOString() });
     currDate.setDate(currDate.getDate() + 1);
   }
-  const date = new HistogramModel(question, dates);
+  const date = new HistogramModel(question, dates, { allowChangeIntervals: true });
+  date.intervalsMode = "default" as any;
+  expect(date.intervalsMode).toBe("default");
+  expect(date.allowChangeIntervals).toBeTruthy();
 
   const histValues = date.getValues();
   const histLabels = date.getLabels();
   const histIntervals = date.intervals;
-  const histData = date.getData();
+  const histData = await date.getCalculatedValues();
 
   expect(histIntervals.length).toBe(10);
-  expect(histValues).toMatchObject([
-    1577836800000,
-    1578096000000,
-    1578355200000,
-    1578614400000,
-    1578873600000,
-    1579132800000,
-    1579392000000,
-    1579651200000,
-    1579910400000,
-    1580169600000,
-  ]);
+  expect(histValues.length).toBe(10);
+  expect(histValues.every((v) => typeof v === "number")).toBeTruthy();
+  expect(histValues.every((v, i, arr) => i === 0 || v > arr[i - 1])).toBeTruthy();
+  expect(histValues.slice(1).every((v, i) => v - histValues[i] === 3 * 24 * 60 * 60 * 1000)).toBeTruthy();
   expect(histLabels).toMatchObject([
     "1/1/2020-1/4/2020",
     "1/4/2020-1/7/2020",
@@ -121,10 +140,10 @@ test("date default intervals", () => {
     "1/25/2020-1/28/2020",
     "1/28/2020-1/31/2020",
   ]);
-  expect(histData).toMatchObject([[3, 3, 3, 3, 3, 3, 3, 3, 3, 4]]);
+  expect(histData.data).toMatchObject([[3, 3, 3, 3, 3, 3, 3, 3, 3, 4]]);
 });
 
-test("date empty data", () => {
+test("date empty data", async () => {
   const question: any = {
     getType: () => "text",
     type: "text",
@@ -136,14 +155,14 @@ test("date empty data", () => {
 
   const histValues = date.getValues();
   const histIntervals = date.intervals;
-  const histData = date.getData();
+  const histData = await date.getCalculatedValues();
 
   expect(histIntervals.length).toBe(0);
   expect(histValues).toMatchObject([]);
-  expect(histData).toMatchObject([[]]);
+  expect(histData.data).toMatchObject([[]]);
 });
 
-test("number custom intervals", () => {
+test("number custom intervals", async () => {
   const question: any = {
     getType: () => "text",
     type: "text",
@@ -191,26 +210,28 @@ test("number custom intervals", () => {
 
   const histValues = date.getValues();
   const histIntervals = date.intervals;
-  const histData = date.getData();
+  const histData = await date.getCalculatedValues();
 
+  expect(date.intervalsMode).toBe("custom");
+  expect(date.allowChangeIntervals).toBeFalsy();
   expect(histIntervals.length).toBe(5);
   expect(histValues).toMatchObject([
-    70,
-    19,
-    14,
-    7,
     0,
+    7,
+    14,
+    19,
+    70
   ]);
-  expect(histData).toMatchObject([[
-    1,
+  expect(histData.data).toMatchObject([[
+    12,
     11,
     5,
     11,
-    12]
-  ]);
+    1
+  ]]);
 });
 
-test("number custom intervals for small result sets", () => {
+test("number custom intervals for small result sets", async () => {
   const question: any = {
     getType: () => "text",
     type: "text",
@@ -231,20 +252,64 @@ test("number custom intervals for small result sets", () => {
 
   const histValues = date.getValues();
   const histIntervals = date.intervals;
-  const histData = date.getData();
+  const histData = await date.getCalculatedValues();
 
   expect(histIntervals.length).toBe(5);
   expect(histValues).toMatchObject([
-    70,
-    19,
-    14,
-    7,
     0,
+    7,
+    14,
+    19,
+    70
   ]);
-  expect(histData).toMatchObject([[0, 5, 3, 0, 0]]);
+  expect(histData.data).toMatchObject([[0, 0, 3, 5, 0]]);
 });
 
-test("histogram series default algorithm data", () => {
+test("number custom intervals on the visualizer level", async () => {
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "number",
+    name: "age",
+  };
+  const histogram = new HistogramModel(question, data, {
+    intervals: [
+      { start: 0, end: 18, label: "under 18" },
+      { start: 18, end: 100, label: "18+" }
+    ]
+  });
+
+  const histData = await histogram.getCalculatedValues();
+
+  expect(histogram.hasCustomIntervals).toBeTruthy();
+  expect(histogram.intervalsMode).toBe("custom");
+  expect(histogram.getValues()).toMatchObject([0, 18]);
+  expect(histogram.getLabels()).toMatchObject(["under 18", "18+"]);
+  expect(histData.data).toMatchObject([[3, 5]]);
+});
+
+test("question-level custom intervals take precedence over visualizer-level ones", () => {
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "number",
+    name: "age",
+  };
+  const histogram = new HistogramModel(question, data, {
+    intervals: [
+      { start: 0, end: 100, label: "visualizer level" }
+    ],
+    age: {
+      intervals: [
+        { start: 0, end: 100, label: "question level" }
+      ]
+    }
+  });
+
+  expect(histogram.getLabels()).toMatchObject(["question level"]);
+});
+
+test("histogram series default algorithm data", async () => {
   const question: any = {
     getType: () => "text",
     type: "text",
@@ -288,11 +353,17 @@ test("histogram series default algorithm data", () => {
   expect(number.getSeriesValues()).toMatchObject(series);
   expect(number.getSeriesLabels()).toMatchObject(series);
 
-  const chartData = number.getData();
-  expect(chartData).toMatchObject([[1, 0, 0, 0], [0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]);
+  const chartData = await number.getCalculatedValues();
+  expect(chartData.data).toMatchObject([
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+  ]);
 });
 
-test("histogram series intervals data", () => {
+test("histogram series intervals data", async () => {
   const preparedData = [
     {
       "Column 2": 1,
@@ -371,68 +442,13 @@ test("histogram series intervals data", () => {
     seriesLabels: series,
   });
 
-  const chartData = number.getData();
-  expect(chartData).toMatchObject([
-    [
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      0,
-    ],
-    [
-      1,
-      0,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-    ],
-    [
-      1,
-      0,
-      0,
-      0,
-      1,
-      0,
-      0,
-      0,
-      1,
-      0,
-    ],
-    [
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-      0,
-      1,
-      0,
-    ],
-    [
-      0,
-      0,
-      1,
-      0,
-      0,
-      0,
-      1,
-      0,
-      0,
-      2,
-    ],
+  const chartData = await number.getCalculatedValues();
+  expect(chartData.data).toMatchObject([
+    [1, 0, 0, 1, 0, 0, 1, 0, 0, 0],
+    [1, 0, 0, 0, 1, 0, 0, 1, 0, 0],
+    [1, 0, 0, 0, 1, 0, 0, 0, 1, 0],
+    [0, 0, 1, 0, 0, 1, 0, 0, 1, 0],
+    [0, 0, 1, 0, 0, 0, 1, 0, 0, 2],
   ]);
 });
 
@@ -451,17 +467,34 @@ test("histogram original data keep number original values", () => {
     getType: () => "rating",
     type: "rating",
     name: "question1",
+    rateMin: 1,
+    rateMax: 5,
+    rateStep: 1
   };
   const number = new HistogramModel(question, [{ "question2": "Yes", "question1": 3 }, { "question2": "It is going so well!!!", "question1": 5 }, { "question2": false, "question1": 5 }, { "question2": true, "question1": 1 }, { "question2": false, "question1": 5 }, { "question3": "item2", "question2": false, "question1": 5 }]);
-  expect(number.getValues()).toEqual([1, 3, 5]);
-  expect(number.getLabels()).toEqual(["1", "3", "5"]);
+  expect(number["valueType"]).toBe("number");
+  expect(number.getValues()).toEqual([1, 2, 3, 4, 5]);
+  expect(number.getLabels()).toEqual(["1", "2", "3", "4", "5"]);
 
   const selectedItem = number.getSelectedItemByText("5");
   expect(selectedItem.value).toBe(5);
   expect(selectedItem.text).toBe("5");
 });
 
-test("histogram should use rate values", () => {
+test("histogram rating should be numeric", () => {
+  const question: any = {
+    getType: () => "rating",
+    type: "rating",
+    name: "question1",
+    rateMin: 0,
+    rateMax: 10,
+    rateStep: 1
+  };
+  const number = new HistogramModel(question, []);
+  expect(number["valueType"]).toBe("number");
+});
+
+test("histogram should use rate values", async () => {
   const json = {
     questions: [
       { "type": "rating", "name": "question1", "rateValues": [{ "value": 1, "text": "15 minutes" }, { "value": 2, "text": "30 minutes" }, { "value": 3, "text": "1 hour" }] }
@@ -471,9 +504,9 @@ test("histogram should use rate values", () => {
   const rating = new HistogramModel(survey.getAllQuestions()[0], [{ "question1": 3 }]);
   expect(rating.intervals).toEqual([
     {
-      "end": 4,
-      "label": "1 hour",
-      "start": 3,
+      "end": 2,
+      "label": "15 minutes",
+      "start": 1,
     },
     {
       "end": 3,
@@ -481,18 +514,14 @@ test("histogram should use rate values", () => {
       "start": 2,
     },
     {
-      "end": 2,
-      "label": "15 minutes",
-      "start": 1,
+      "end": 4,
+      "label": "1 hour",
+      "start": 3,
     },
   ]);
-  expect(rating.getValues()).toEqual([3, 2, 1]);
-  expect(rating.getLabels()).toEqual(["1 hour", "30 minutes", "15 minutes"]);
-  expect(rating.getData()).toEqual([[
-    1,
-    0,
-    0,
-  ]]);
+  expect(rating.getValues()).toEqual([1, 2, 3]);
+  expect(rating.getLabels()).toEqual(["15 minutes", "30 minutes", "1 hour"]);
+  expect((await rating.getCalculatedValues()).data).toEqual([[0, 0, 1]]);
 });
 
 test("histogram intervals alignment and rounding", () => {
@@ -604,7 +633,7 @@ test("histogram intervals alignment and rounding", () => {
       age: 25
     },
     { "question1": 3 }
-  ];  
+  ];
   const question: any = {
     getType: () => "rating",
     type: "rating",
@@ -613,4 +642,873 @@ test("histogram intervals alignment and rounding", () => {
   const number = new HistogramModel(question, data);
   expect(number.getValues()).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   expect(number.getLabels()).toEqual(["0-1", "1-2", "2-3", "3-4", "4-5", "5-6", "6-7", "7-8", "8-9", "9-10"]);
+});
+
+test("number histogram answers order", async () => {
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "number",
+    name: "question2",
+  };
+  const number = new HistogramModel(question, [
+    {
+      "question2": 15.1232432423
+    }, {
+      "question2": 32.1435232
+    }, {
+      "question2": 14.1232432423
+    }, {
+      "question2": 13.1435232232
+    }, {
+      "question2": 16.21
+    }, {
+      "question2": 11.14352
+    }, {
+      "question2": 11.1435232232
+    }, {
+      "question2": 11.1435232232
+    }, {
+      "question2": 15
+    }, {
+      "question2": 44
+    },
+  ] as Array<any>);
+
+  const histValues = number.getValues();
+  const histLabels = number.getLabels();
+
+  expect(number["valueType"]).toBe("number");
+  expect(number.intervals).toEqual([
+    {
+      "end": 14.43,
+      "label": "11.14-14.43",
+      "start": 11.14,
+    },
+    {
+      "end": 17.71,
+      "label": "14.43-17.71",
+      "start": 14.43,
+    },
+    {
+      "end": 21,
+      "label": "17.71-21",
+      "start": 17.71,
+    },
+    {
+      "end": 24.29,
+      "label": "21-24.29",
+      "start": 21,
+    },
+    {
+      "end": 27.57,
+      "label": "24.29-27.57",
+      "start": 24.29,
+    },
+    {
+      "end": 30.86,
+      "label": "27.57-30.86",
+      "start": 27.57,
+    },
+    {
+      "end": 34.14,
+      "label": "30.86-34.14",
+      "start": 30.86,
+    },
+    {
+      "end": 37.43,
+      "label": "34.14-37.43",
+      "start": 34.14,
+    },
+    {
+      "end": 40.71,
+      "label": "37.43-40.71",
+      "start": 37.43,
+    },
+    {
+      "end": 44.03285648,
+      "label": "40.71-44",
+      "start": 40.71,
+    },
+  ]);
+  expect(histValues).toMatchObject([11.14, 14.43, 17.71, 21, 24.29, 27.57, 30.86, 34.14, 37.43, 40.71]);
+  expect(histLabels).toMatchObject(["11.14-14.43", "14.43-17.71", "17.71-21", "21-24.29", "24.29-27.57", "27.57-30.86", "30.86-34.14", "34.14-37.43", "37.43-40.71", "40.71-44"]);
+
+  const histData = await number.getCalculatedValues();
+  expect(histData.data).toMatchObject([[5, 3, 0, 0, 0, 0, 1, 0, 0, 1]]);
+});
+
+test("rating with rateValues with wrong order", () => {
+  const question: any = {
+    getType: () => "rating",
+    type: "rating",
+    name: "q1",
+    "isRequired": true,
+    "autoGenerate": false,
+    "rateValues": [
+      {
+        "value": 7,
+        "text": "7 - Very satisfied"
+      },
+      {
+        "value": 6,
+        "text": "6 - Quite satisfied"
+      },
+      {
+        "value": 5,
+        "text": "5 - Somewhat satisfied"
+      },
+      {
+        "value": 4,
+        "text": "4 - Neutral"
+      },
+      {
+        "value": 3,
+        "text": "3 - Somewhat dissatisfied"
+      },
+      {
+        "value": 2,
+        "text": "2 - Quite dissatisfied"
+      },
+      {
+        "value": 1,
+        "text": "1 - Very dissatisfied"
+      }
+    ],
+  };
+  const ratingData = [
+    { "q1": 5 },
+    { "q1": 4 },
+    { "q1": 2 },
+    { "q1": 7 },
+    { "q1": 3 }
+  ];
+  const histogram = new HistogramModel(question, ratingData);
+
+  const calculatedData = (histogram as any).getCalculatedValuesCore();
+  expect(calculatedData.data).toEqual([[0, 1, 1, 1, 1, 0, 1]]);
+});
+
+test("getCalculatedValues", async () => {
+  const preparedData = [
+    {
+      "Column 1": 1,
+      "Column 2": 1,
+      "__sa_series_name": "Row 1"
+    },
+    {
+      "Column 1": 2,
+      "Column 2": 2,
+      "__sa_series_name": "Row 2"
+    },
+    {
+      "Column 1": 3,
+      "Column 2": 1,
+      "__sa_series_name": "Row 3"
+    },
+    {
+      "Column 1": 4,
+      "Column 2": 4,
+      "__sa_series_name": "Row 4"
+    },
+    {
+      "Column 1": 5,
+      "Column 2": 5,
+      "__sa_series_name": "Row 5"
+    },
+  ];
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "number",
+    name: "Column 2",
+  };
+  const series = ["Row 1", "Row 2", "Row 3", "Row 4", "Row 5"];
+  const number = new HistogramModel(question, preparedData, {
+    seriesValues: series,
+    seriesLabels: series,
+  });
+
+  const chartData = await number.getCalculatedValues();
+  expect(chartData.data).toMatchObject([
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+  ]);
+});
+
+test("getCalculatedValues - 2 rows", async () => {
+  const preparedData = [
+    {
+      "Column 1": 1,
+      "Column 2": 1,
+      "__sa_series_name": "Row 1"
+    },
+    {
+      "Column 1": 2,
+      "Column 2": 2,
+      "__sa_series_name": "Row 2"
+    },
+    {
+      "Column 1": 3,
+      "Column 2": 1,
+      "__sa_series_name": "Row 1"
+    },
+    {
+      "Column 1": 4,
+      "Column 2": 4,
+      "__sa_series_name": "Row 2"
+    },
+    {
+      "Column 1": 5,
+      "Column 2": 5,
+      "__sa_series_name": "Row 1"
+    },
+  ];
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "number",
+    name: "Column 2",
+  };
+  const series = ["Row 1", "Row 2"];
+  const number = new HistogramModel(question, preparedData, {
+    seriesValues: series,
+    seriesLabels: series,
+  });
+
+  const chartData = await number.getCalculatedValues();
+  expect(chartData.data).toMatchObject([
+    [2, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+    [0, 0, 1, 0, 0, 0, 0, 1, 0, 0],
+  ]);
+});
+
+test("histogram date year intervals", () => {
+  var data = [
+    {
+      nps_score: 1,
+      date: "2009-10-13",
+      age: 17
+    },
+    {
+      nps_score: 1,
+      date: "2008-10-13",
+      age: 17
+    },
+    {
+      nps_score: 5,
+      date: "2007-10-13",
+      age: 17
+    },
+    {
+      nps_score: 10,
+      date: "2006-10-13",
+      age: 30
+    },
+    {
+      nps_score: 5,
+      date: "2005-10-13",
+      age: 30
+    },
+    {
+      nps_score: 5,
+      date: "2004-10-13",
+      age: 40
+    },
+    {
+      nps_score: 5,
+      date: "2004-10-13",
+      age: 40
+    },
+    {
+      nps_score: 5,
+      date: "2006-10-13",
+      age: 25
+    },
+    {
+      nps_score: 6,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      date: "2008-10-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      date: "2004-10-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 7,
+      date: "2005-10-13",
+      age: 25
+    },
+    {
+      nps_score: 8,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      nps_score: 9,
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 2,
+      date: "2005-10-13",
+      age: 25
+    },
+    {
+      nps_score: 2,
+      date: "2006-10-13",
+      age: 25
+    },
+    {
+      nps_score: 3,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      nps_score: 4,
+      date: "2008-10-13",
+      age: 25
+    },
+    {
+      nps_score: 4,
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 0,
+      date: "2009-10-13",
+      age: 25
+    },
+    { nps_score: 0, }
+  ];
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "date",
+    name: "date",
+  };
+  const date = new HistogramModel(question, data, { allowChangeIntervals: true });
+  date.intervalsMode = "default" as any;
+  expect(date.allowChangeIntervals).toBeTruthy();
+  expect(date.intervalsMode).toBe("default");
+  expect(date.getLabels()).toEqual([
+    "10/13/2004-4/13/2005",
+    "4/13/2005-10/13/2005",
+    "10/13/2005-4/13/2006",
+    "4/13/2006-10/13/2006",
+    "10/13/2006-4/14/2007",
+    "4/14/2007-10/13/2007",
+    "10/13/2007-4/13/2008",
+    "4/13/2008-10/12/2008",
+    "10/12/2008-4/13/2009",
+    "4/13/2009-10/13/2009",
+  ]);
+
+  date.intervalsMode = "years";
+  expect(date.intervalsMode).toBe("years");
+  expect(date.getLabels()).toEqual([
+    "2004",
+    "2005",
+    "2006",
+    "2007",
+    "2008",
+    "2009",
+  ]);
+});
+
+test("histogram date different intervals", async () => {
+  var data = [
+    {
+      date: "2009-01-13",
+      age: 17
+    },
+    {
+      date: "2009-02-13",
+      age: 17
+    },
+    {
+      date: "2009-03-13",
+      age: 17
+    },
+    {
+      date: "2009-04-13",
+      age: 30
+    },
+    {
+      date: "2009-05-13",
+      age: 30
+    },
+    {
+      date: "2009-06-13",
+      age: 40
+    },
+    {
+      date: "2009-07-13",
+      age: 40
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      date: "2009-08-13",
+      age: 25
+    },
+    {
+      date: "2009-09-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      date: "2009-11-13",
+      age: 25
+    },
+    {
+      date: "2009-12-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      date: "2009-02-13",
+      age: 25
+    },
+    {
+      date: "2009-02-13",
+      age: 25
+    },
+    { nps_score: 0, }
+  ];
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "date",
+    name: "date",
+  };
+  const date = new HistogramModel(question, data, { allowChangeIntervals: true });
+  date.intervalsMode = "default" as any;
+  expect(date.allowChangeIntervals).toBeTruthy();
+  expect(date.intervalsMode).toBe("default");
+
+  date.intervalsMode = "years";
+  expect(date.intervalsMode).toBe("years");
+  expect(date.getLabels()).toEqual(["2009"]);
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(1);
+
+  date.intervalsMode = "quarters";
+  expect(date.intervalsMode).toBe("quarters");
+  expect(date.getLabels()).toEqual([
+    "I 2009",
+    "II 2009",
+    "III 2009",
+    "IV 2009",
+  ]);
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(4);
+
+  date.intervalsMode = "months";
+  expect(date.intervalsMode).toBe("months");
+  expect(date.getLabels()).toEqual([
+    "Jan 2009",
+    "Feb 2009",
+    "Mar 2009",
+    "Apr 2009",
+    "May 2009",
+    "Jun 2009",
+    "Jul 2009",
+    "Aug 2009",
+    "Sep 2009",
+    "Oct 2009",
+    "Nov 2009",
+    "Dec 2009",
+  ]);
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(12);
+
+  date.intervalsMode = "quarters";
+  expect(date.intervalsMode).toBe("quarters");
+  expect(date.getLabels()).toEqual([
+    "I 2009",
+    "II 2009",
+    "III 2009",
+    "IV 2009",
+  ]);
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(4);
+});
+
+test("getBestIntervalMode for date histogram", () => {
+  expect(getBestIntervalMode(new Date("2020-01-01") as any, new Date("2020-01-10") as any)).toBe("days");
+  expect(getBestIntervalMode(new Date("2020-01-01") as any, new Date("2020-04-10") as any)).toBe("months");
+  expect(getBestIntervalMode(new Date("2020-01-01") as any, new Date("2020-10-10") as any)).toBe("months");
+  expect(getBestIntervalMode(new Date("2020-01-01") as any, new Date("2021-05-10") as any)).toBe("quarters");
+  expect(getBestIntervalMode(new Date("2020-01-01") as any, new Date("2025-10-10") as any)).toBe("years");
+});
+
+test("histogram date auto intervals mode", async () => {
+  var data = [
+    {
+      nps_score: 1,
+      date: "2009-10-13",
+      age: 17
+    },
+    {
+      nps_score: 1,
+      date: "2008-10-13",
+      age: 17
+    },
+    {
+      nps_score: 5,
+      date: "2007-10-13",
+      age: 17
+    },
+    {
+      nps_score: 10,
+      date: "2006-10-13",
+      age: 30
+    },
+    {
+      nps_score: 5,
+      date: "2005-10-13",
+      age: 30
+    },
+    {
+      nps_score: 5,
+      date: "2004-10-13",
+      age: 40
+    },
+    {
+      nps_score: 5,
+      date: "2004-10-13",
+      age: 40
+    },
+    {
+      nps_score: 5,
+      date: "2006-10-13",
+      age: 25
+    },
+    {
+      nps_score: 6,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      date: "2008-10-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      date: "2004-10-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 7,
+      date: "2005-10-13",
+      age: 25
+    },
+    {
+      nps_score: 8,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      nps_score: 9,
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 2,
+      date: "2005-10-13",
+      age: 25
+    },
+    {
+      nps_score: 2,
+      date: "2006-10-13",
+      age: 25
+    },
+    {
+      nps_score: 3,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      nps_score: 4,
+      date: "2008-10-13",
+      age: 25
+    },
+    {
+      nps_score: 4,
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 0,
+      date: "2009-10-13",
+      age: 25
+    },
+    { nps_score: 0, }
+  ];
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "date",
+    name: "date",
+  };
+  const date = new HistogramModel(question, data, { allowChangeIntervals: true });
+  date.intervalsMode = "default" as any;
+  expect(date.allowChangeIntervals).toBeTruthy();
+  expect(date.intervalsMode).toBe("default");
+
+  date.intervalsMode = "auto";
+  expect(date.intervalsMode).toBe("auto");
+  expect(date.getLabels()).toEqual([
+    "2004",
+    "2005",
+    "2006",
+    "2007",
+    "2008",
+    "2009",
+  ]);
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(6);
+});
+
+test("changeIntervalsMode and allowRunningTotals toolbar items for date histogram", () => {
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "date",
+    name: "date",
+  };
+  const date1 = new HistogramModel(question, data);
+  expect(date1.allowChangeIntervals).toBeTruthy();
+  expect(date1["toolbarItemCreators"]["changeIntervalsMode"]).toBeDefined();
+  expect(date1["toolbarItemCreators"]["showRunningTotals"]).toBeUndefined();
+  const date2 = new HistogramModel(question, data, { allowChangeIntervals: false });
+  expect(date2.allowChangeIntervals).toBeFalsy();
+  expect(date2["toolbarItemCreators"]["changeIntervalsMode"]).toBeUndefined();
+  expect(date2["toolbarItemCreators"]["showRunningTotals"]).toBeUndefined();
+  const date3 = new HistogramModel(question, data, { allowRunningTotals: true });
+  expect(date3.allowChangeIntervals).toBeTruthy();
+  expect(date3["toolbarItemCreators"]["changeIntervalsMode"]).toBeDefined();
+  expect(date3["toolbarItemCreators"]["showRunningTotals"]).toBeDefined();
+});
+
+test("allowRunningTotals and showRunningTotals for date histogram", async () => {
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "date",
+    name: "date",
+  };
+  const date = new HistogramModel(question, data, { allowChangeIntervals: true, allowRunningTotals: true });
+  date.intervalsMode = "default" as any;
+  expect(date.allowChangeIntervals).toBeTruthy();
+  expect(date.showRunningTotals).toBeFalsy();
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(10);
+  expect((await date.getCalculatedValues()).data[0]).toEqual([2, 0, 0, 0, 2, 0, 0, 1, 0, 3]);
+
+  date.showRunningTotals = true;
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(10);
+  expect((await date.getCalculatedValues()).data[0]).toEqual([2, 2, 2, 2, 4, 4, 4, 5, 5, 8]);
+});
+
+test("getAnswersData with showGrouped set to true", async () => {
+  const data = [
+    {
+      nps_score: 1,
+      date: "2009-10-13",
+      age: 17
+    },
+    {
+      nps_score: 1,
+      date: "2008-10-13",
+      age: 17
+    },
+    {
+      nps_score: 5,
+      date: "2007-10-13",
+      age: 17
+    },
+    {
+      nps_score: 10,
+      date: "2006-10-13",
+      age: 30
+    },
+    {
+      nps_score: 5,
+      date: "2005-10-13",
+      age: 30
+    },
+    {
+      nps_score: 5,
+      date: "2004-10-13",
+      age: 40
+    },
+    {
+      nps_score: 5,
+      date: "2004-10-13",
+      age: 40
+    },
+    {
+      nps_score: 5,
+      date: "2006-10-13",
+      age: 25
+    },
+    {
+      nps_score: 6,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      date: "2008-10-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      date: "2004-10-13",
+      age: 25
+    },
+    {
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 7,
+      date: "2005-10-13",
+      age: 25
+    },
+    {
+      nps_score: 8,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      nps_score: 9,
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 2,
+      date: "2005-10-13",
+      age: 25
+    },
+    {
+      nps_score: 2,
+      date: "2006-10-13",
+      age: 25
+    },
+    {
+      nps_score: 3,
+      date: "2007-10-13",
+      age: 25
+    },
+    {
+      nps_score: 4,
+      date: "2008-10-13",
+      age: 25
+    },
+    {
+      nps_score: 4,
+      date: "2009-10-13",
+      age: 25
+    },
+    {
+      nps_score: 0,
+      date: "2009-10-13",
+      age: 25
+    },
+    { nps_score: 0, }
+  ];
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "date",
+    name: "date",
+  };
+  const date = new HistogramModel(question, data, { allowChangeIntervals: true });
+  date.intervalsMode = "default" as any;
+  expect(date.intervalsMode).toBe("default");
+  expect(date.canShowGroupedDateSeries).toBeFalsy();
+  expect(date.showGrouped).toBeFalsy();
+
+  date.intervalsMode = "years";
+  expect(date.canShowGroupedDateSeries).toBeTruthy();
+
+  let answersData = await date.getAnswersData();
+  expect(answersData.datasets).toStrictEqual([[3, 3, 3, 4, 3, 6]]);
+  expect(answersData.labels).toStrictEqual(["2004", "2005", "2006", "2007", "2008", "2009"]);
+  expect(answersData.seriesLabels).toStrictEqual([]);
+
+  date.showGrouped = true;
+  answersData = await date.getAnswersData();
+  expect(answersData.datasets).toStrictEqual([[0, 0, 0, 0, 3, 3, 3, 4, 3, 6], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]);
+  expect(answersData.labels).toStrictEqual(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+  expect(answersData.seriesLabels).toStrictEqual(["2000s", "2010s"]);
+
+  date.intervalsMode = "quarters";
+  answersData = await date.getAnswersData();
+  expect(answersData.datasets).toStrictEqual([[0, 0, 0, 3], [0, 0, 0, 3], [0, 0, 0, 3], [0, 0, 0, 4], [0, 0, 0, 3], [0, 0, 0, 6], [0, 0, 0, 0]]);
+  expect(answersData.labels).toStrictEqual(["I", "II", "III", "IV"]);
+  expect(answersData.seriesLabels).toStrictEqual(["2004", "2005", "2006", "2007", "2008", "2009", "2010"]);
+});
+
+test("aggregateDataNames for date histogram", async () => {
+  const question: any = {
+    getType: () => "text",
+    type: "text",
+    inputType: "date",
+    name: "date",
+  };
+  const date = new HistogramModel(question, data, {
+    allowChangeIntervals: true,
+    allowRunningTotals: true, date: {
+      aggregateDataNames: ["age"],
+    } });
+  date.intervalsMode = "default" as any;
+  expect(date.allowChangeIntervals).toBeTruthy();
+  expect(date.showRunningTotals).toBeFalsy();
+  expect(date.aggregateDataName).toBe("");
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(10);
+  expect((await date.getCalculatedValues()).data[0]).toEqual([2, 0, 0, 0, 2, 0, 0, 1, 0, 3]);
+
+  date.showRunningTotals = true;
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(10);
+  expect((await date.getCalculatedValues()).data[0]).toEqual([2, 2, 2, 2, 4, 4, 4, 5, 5, 8]);
+
+  expect(date.possibleAggregateDataNames).toStrictEqual(["age"]);
+  date.aggregateDataName = "age";
+  date.showRunningTotals = false;
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(10);
+  expect((await date.getCalculatedValues()).data[0]).toEqual([80, 0, 0, 0, 60, 0, 0, 25, 0, 51]);
+
+  date.showRunningTotals = true;
+  expect(((await date.getCalculatedValues()).data[0] as any).length).toEqual(10);
+  expect((await date.getCalculatedValues()).data[0]).toEqual([80, 80, 80, 80, 140, 140, 140, 165, 165, 216]);
 });

@@ -1,8 +1,13 @@
-# Get Started with Survey Analytics
+---
+title: SurveyJS Dashboard – Real-Time Survey Data Visualization and Analysis
+description: Get started with SurveyJS Dashboard to visualize and analyze survey results in real time. Render interactive charts and tables, apply filtering and pagination, and create custom data visualizers.
+---
 
-Refer to one of the following tutorials to get started with Survey Analytics on your platform:
+# Get Started with SurveyJS Dashboard
+
+Refer to one of the following tutorials to get started with SurveyJS Dashboard on your platform:
 
 - [Angular](/Documentation/Analytics?id=get-started-angular)
 - [Vue](/Documentation/Analytics?id=get-started-vue)
 - [React](/Documentation/Analytics?id=get-started-react)
-- [Knockout / jQuery](/Documentation/Analytics?id=get-started-knockout-jquery)
+- [HTML/CSS/JavaScript](/dashboard/documentation/get-started-html-css-javascript)

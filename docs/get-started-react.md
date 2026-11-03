@@ -1,90 +1,144 @@
-# Add Survey Analytics to a React Application
+---
+title: Add SurveyJS Dashboard to Your Application | Step-by-Step Tutorial for React
+description: Learn how to add SurveyJS Dashboard to your React application with this comprehensive step-by-step tutorial. Enhance your self-hosted surveying tool with powerful survey analytics capabilities.
+---
 
-This step-by-step tutorial will help you get started with Survey Analytics in a React application. To add Survey Analytics to your application, follow the steps below:
+# Add SurveyJS Dashboard to a React Application
+
+This tutorial explains how to integrate SurveyJS Dashboard into a React application and visualize survey results. Follow the steps below to set up and render a dashboard:
 
 - [Install the `survey-analytics` npm Package](#install-the-survey-analytics-npm-package)
 - [Configure Styles](#configure-styles)
 - [Load Survey Results](#load-survey-results)
-- [Configure the Visualization Panel](#configure-the-visualization-panel)
-- [Render the Visualization Panel](#render-the-visualization-panel)
+- [Configure the Dashboard](#configure-the-dashboard)
+- [Render the Dashboard](#render-the-dashboard)
+- [Activate a SurveyJS License](#activate-a-surveyjs-license)
 
-As a result, you will create the following dashboard:
+The final result is an interactive dashboard similar to the one shown below:
 
-<iframe src="https://codesandbox.io/embed/purple-darkness-i3tozi?fontsize=14&hidenavigation=1&module=%2Fsrc%2FApp.js&theme=dark"
-    style="width:100%; height:500px; border:0; border-radius: 4px; overflow:hidden;"
-    title="Add SurveyJS Analytics to a React Application"
-    allow="accelerometer; ambient-light-sensor; camera; encrypted-media; geolocation; gyroscope; hid; microphone; midi; payment; usb; vr; xr-spatial-tracking"
-    sandbox="allow-forms allow-modals allow-popups allow-presentation allow-same-origin allow-scripts"
+<details>
+  <summary>View Live Example</summary>
+
+<iframe src="/proxy/github/code-examples/get-started-analytics/html-css-js/index.html"
+    style="width:100%; border:0; border-radius: 4px; overflow:hidden;"
 ></iframe>
 
-You can find the full code for this tutorial in the following GitHub repository: <a href="https://github.com/surveyjs/code-examples/tree/main/get-started-analytics/react" target="_blank">Get Started with SurveyJS Analytics - React</a>.
+</details>
+
+[View Full Code on GitHub](https://github.com/surveyjs/code-examples/tree/main/get-started-analytics/react (linkStyle))
+
+If you need a preconfigured starter project with all SurveyJS components, refer to the following repositories:
+
+- <a href="https://github.com/surveyjs/surveyjs-nextjs" target="_blank">SurveyJS + Next.js</a>
+- <a href="https://github.com/surveyjs/surveyjs-remix" target="_blank">SurveyJS + Remix</a>
 
 ## Install the `survey-analytics` npm Package
 
-Survey Analytics is distributed as a <a href="https://www.npmjs.com/package/survey-analytics" target="_blank">survey-analytics</a> npm package. Run the following command to install it:
+SurveyJS Dashboard is distributed as the <a href="https://www.npmjs.com/package/survey-analytics" target="_blank">survey-analytics</a> npm package. Install it using the following command:
 
-```cmd
-npm install survey-analytics --save
+```sh
+npm install survey-analytics
 ```
 
-Survey Analytics depends on the <a href="https://github.com/plotly/plotly.js#readme" target="_blank">Plotly.js</a> and <a href="https://github.com/timdream/wordcloud2.js#readme" target="_blank">Wordcloud</a> libraries. Wordcloud is used to visualize the Text, Multiple Text, and Comment question types. Plotly.js is used to visualize the rest of the question types. The command above installs both these libraries as dependencies.
+SurveyJS Dashboard uses the <a href="https://www.chartjs.org/" target="_blank">Chart.js</a> library for data visualization. This dependency is installed automatically.
 
 ## Configure Styles
 
-Import the Survey Analytics style sheet as shown below:
+### Add Themes
+
+Create a React component that will render your dashboard and import the SurveyJS Dashboard stylesheet as shown below:
 
 ```js
-import 'survey-analytics/survey.analytics.min.css';
+// components/Dashboard.tsx
+import 'survey-analytics/survey.analytics.css';
+```
+
+### Add Fonts
+
+Starting with SurveyJS v3.0.4, fonts are no longer included in SurveyJS packages. Load Open Sans separately to preserve the default appearance, unless your application already does so. If you use a custom font, load it instead. Otherwise, the browser uses a fallback font, which may affect spacing and layout.
+
+To add Open Sans using [Fontsource](https://fontsource.org/docs/getting-started/install), run the following command:
+
+```sh
+npm install @fontsource/open-sans
+```
+
+The following example imports font weights 400, 600, and 700. Place the font imports in your application's entry file or root layout to load them once for all SurveyJS components.
+
+```js
+// app/layout.tsx or pages/_app.tsx
+import '@fontsource/open-sans/400.css';
+import '@fontsource/open-sans/600.css';
+import '@fontsource/open-sans/700.css';
 ```
 
 ## Load Survey Results
 
-You can access survey results as a JSON object within the `SurveyModel`'s `onComplete` event handler. Send the results to your server and store them with a specific survey ID. Refer to the [Handle Survey Completion](/Documentation/Library?id=get-started-react#handle-survey-completion) help topic for more information.  
+When a respondent completes a survey, a JSON object with their answers is passed to the `SurveyModel`'s [`onComplete`](https://surveyjs.io/form-library/documentation/api-reference/survey-data-model#onComplete) event handler. Send this object to your server and store it with a specific survey ID (see [Handle Survey Completion](/form-library/documentation/get-started-react#handle-survey-completion)). A collection of these JSON objects forms the data source for the Dashboard. You can aggregate this data either on the server or on the client.
 
-To load the survey results, send the survey ID to your server and return an array of JSON objects:
+### Server-Side Data Processing
+
+By default, the Dashboard loads all stored responses and processes them in the browser, which can degrade performance as the dataset grows. To optimize load times, move aggregation logic to the server and return only precomputed statistics to the client. See the following demo for a reference implementation:
+
+[SurveyJS Dashboard: Server-Side Data Processing Demo Example](https://github.com/surveyjs/surveyjs-dashboard-nodejs-mongodb (linkStyle))
+
+### Client-Side Data Processing
+
+With client-side processing, the Dashboard loads the full dataset at startup and performs aggregation in the browser. This approach requires more bandwidth and client-side resources, but is sufficient and often simpler for smaller datasets.
+
+To retrieve results, send a request to your backend and return an array of JSON objects:
 
 ```js
+// components/Dashboard.tsx
 // ...
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Dashboard } from 'survey-analytics';
 
 const SURVEY_ID = 1;
 
-export default function App() {
-  const [vizPanel, setVizPanel] = useState(null);
+export default function DashboardComponent() {
+  const [dashboard, setDashboard] = useState<Dashboard>();
 
-  if (!vizPanel && !!survey) {
-    loadSurveyResults("https://your-web-service.com/" + SURVEY_ID)
-      .then((surveyResults) => {
+  useEffect(() => {
+    loadSurveyResults(`https://your-web-service.com/${SURVEY_ID}`)
+      .then((surveyResults: any[]) => {
         // ...
-        // Configure the Visualization Panel here
-        // Refer to the help topics below
+        // Configure and render the Dashboard here
+        // Refer to the section below
         // ...
+      })
+      .catch((error) => {
+        console.error('Failed to load survey results:', error);
       });
-  }
+  }, []);
 
-  return ();
+  return "...";
 }
 
-function loadSurveyResults (url) {
-  return new Promise((resolve, reject) => {
-    const request = new XMLHttpRequest();
-    request.open('GET', url);
-    request.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-    request.onload = () => {
-      const response = request.response ? JSON.parse(request.response) : [];
-      resolve(response);
+function loadSurveyResults(url: string): Promise<any[]> {
+  return fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
     }
-    request.onerror = () => {
-      reject(request.statusText);
-    }
-    request.send();
-  });
+  })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
+      return response.json();
+    })
+    .catch((error) => {
+      throw new Error(error.message || 'Network error');
+    });;
 }
 ```
 
-For demonstration purposes, this tutorial uses predefined survey results. The following code shows a survey model and the structure of the survey results array:
+For demonstration purposes, this tutorial uses predefined survey results:
 
 ```js
+// components/Dashboard.tsx
+// ...
 const surveyJson = {
   elements: [{
     name: "satisfaction-score",
@@ -105,79 +159,89 @@ const surveyJson = {
     rateMin: 0,
     rateMax: 10,
   }],
-  showQuestionNumbers: "off",
   completedHtml: "Thank you for your feedback!",
 };
 
-const surveyResults = [{
-  "satisfaction-score": 5,
-  "nps-score": 10
-}, {
-  "satisfaction-score": 5,
-  "nps-score": 9
-}, {
-  "satisfaction-score": 3,
-  "nps-score": 6
-}, {
-  "satisfaction-score": 3,
-  "nps-score": 6
-}, {
-  "satisfaction-score": 2,
-  "nps-score": 3
-}];
+const surveyResults = [
+  { "satisfaction-score": 5, "nps-score": 10 },
+  { "satisfaction-score": 5, "nps-score": 9 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 2, "nps-score": 3 }
+];
 ```
 
-## Configure the Visualization Panel
+<div id="configure-the-visualization-panel"></div>
 
-Analytics charts are displayed in a Visualization Panel. Specify [its properties](/Documentation/Analytics?id=ivisualizationpaneloptions) in a configuration object. In this tutorial, the object enables the [`allowHideQuestions`](/Documentation/Analytics?id=ivisualizationpaneloptions#allowHideQuestions) property:
+## Configure the Dashboard
+
+Pass an [`IDashboardOptions`](/dashboard/documentation/api-reference/idashboardoptions) object to the [`Dashboard`](/dashboard/documentation/api-reference/dashboard) constructor to configure the dashboard.
+
+Specify the [`data`](/dashboard/documentation/api-reference/idashboardoptions#data) array to provide survey results. You can then either auto-generate dashboard items based on survey questions or define them manually.
+
+### Auto-Generate Dashboard Items
+
+To generate dashboard items automatically, assign survey questions to the [`questions`](/dashboard/documentation/api-reference/idashboardoptions#questions) property. Use the [`SurveyModel`](https://surveyjs.io/form-library/documentation/api-reference/survey-data-model)'s [`getAllQuestions()`](https://surveyjs.io/form-library/documentation/api-reference/survey-data-model#getAllQuestions) method to retrieve them.
+
+Each generated item inherits the question's [`name`](/dashboard/documentation/api-reference/idashboarditemoptions#name) and [`title`](/dashboard/documentation/api-reference/idashboarditemoptions#title). The Dashboard also automatically selects a suitable visualization [`type`](/dashboard/documentation/api-reference/idashboarditemoptions#type) and populates the list of available alternative types ([`availableTypes`](/dashboard/documentation/api-reference/idashboarditemoptions#availableTypes)) that users can switch between.
+
+Use the [`items`](/dashboard/documentation/api-reference/idashboardoptions#items) array to control which items appear and override their configuration. This array can include question names and [full configuration objects](/dashboard/documentation/api-reference/idashboarditemoptions). When you specify a configuration object, it is merged with the auto-generated settings.
+
+The following example uses the `items` array to set the default [NPS visualization](https://surveyjs.io/dashboard/documentation/chart-types#nps-visualizer) type for the `nps-score` question:
 
 ```js
-const vizPanelOptions = {
-  allowHideQuestions: false
-}
-```
-
-Pass the configuration object, survey questions, and results to the `VisualizationPanel` constructor as shown in the code below to instantiate the Visualization Panel. Assign the produced instance to a constant that will be used later to render the component:
-
-```js
+// components/Dashboard.tsx
 // ...
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Model } from 'survey-core';
-import { VisualizationPanel } from 'survey-analytics';
+import { Dashboard } from 'survey-analytics';
+
+const SURVEY_ID = 1;
 
 const surveyJson = { /* ... */ };
 const surveyResults = [ /* ... */ ];
-const vizPanelOptions = { /* ... */ };
 
-export default function App() {
-  const [survey, setSurvey] = useState(null);
-  const [vizPanel, setVizPanel] = useState(null);
-  if (!survey) {
+export default function DashboardComponent() {
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+
+  useEffect(() => {
     const survey = new Model(surveyJson);
-    setSurvey(survey);
-  }
 
-  if (!vizPanel && !!survey) {
-    const vizPanel = new VisualizationPanel(
-      survey.getAllQuestions(),
-      surveyResults,
-      vizPanelOptions
-    );
-    setVizPanel(vizPanel);
-  }
+    const dashboardInstance = new Dashboard({
+      questions: survey.getAllQuestions(),
+      data: surveyResults,
+      items: [
+        "satisfaction-score",
+        {
+          name: "nps-score",
+          type: "nps"
+        }
+      ]
+    });
 
-  return ();
+    setDashboard(dashboardInstance);
+  }, []);
+
+  return "...";
 }
 ```
 
 <details>
-    <summary>View full code</summary>
+    <summary>View Full Code</summary>
 
 ```js
+// app/layout.tsx or pages/_app.tsx
+import '@fontsource/open-sans/400.css';
+import '@fontsource/open-sans/600.css';
+import '@fontsource/open-sans/700.css';
+```
+
+```js
+// components/Dashboard.tsx
+import 'survey-analytics/survey.analytics.css';
 import { useState } from 'react';
-import 'survey-analytics/survey.analytics.min.css';
 import { Model } from 'survey-core';
-import { VisualizationPanel } from 'survey-analytics';
+import { IDashboardOptions, Dashboard } from 'survey-analytics';
 
 const surveyJson = {
   elements: [{
@@ -199,98 +263,107 @@ const surveyJson = {
     rateMin: 0,
     rateMax: 10,
   }],
-  showQuestionNumbers: "off",
   completedHtml: "Thank you for your feedback!",
 };
 
-const surveyResults = [{
-  "satisfaction-score": 5,
-  "nps-score": 10
-}, {
-  "satisfaction-score": 5,
-  "nps-score": 9
-}, {
-  "satisfaction-score": 3,
-  "nps-score": 6
-}, {
-  "satisfaction-score": 3,
-  "nps-score": 6
-}, {
-  "satisfaction-score": 2,
-  "nps-score": 3
-}];
+const surveyResults = [
+  { "satisfaction-score": 5, "nps-score": 10 },
+  { "satisfaction-score": 5, "nps-score": 9 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 2, "nps-score": 3 }
+];
 
-const vizPanelOptions = {
-  allowHideQuestions: false
-}
+export default function DashboardComponent() {
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
 
-export default function App() {
-  const [survey, setSurvey] = useState(null);
-  const [vizPanel, setVizPanel] = useState(null);
-  if (!survey) {
+  useEffect(() => {
     const survey = new Model(surveyJson);
-    setSurvey(survey);
-  }
 
-  if (!vizPanel && !!survey) {
-    const vizPanel = new VisualizationPanel(
-      survey.getAllQuestions(),
-      surveyResults,
-      vizPanelOptions
-    );
-    vizPanel.showHeader = false;
-    setVizPanel(vizPanel);
-  }
+    const dashboardInstance = new Dashboard({
+      questions: survey.getAllQuestions(),
+      data: surveyResults,
+      items: [
+        "satisfaction-score",
+        {
+          name: "nps-score",
+          type: "nps"
+        }
+      ]
+    });
 
-  return ();
+    setDashboard(dashboardInstance);
+  }, []);
+
+  return "...";
 }
-</script>
 ```
 
 </details>
 
-## Render the Visualization Panel
+### Configure Dashboard Items Manually
 
-A Visualization Panel should be rendered in a page element. Add this element to the component markup:
-
-```js
-export default function App() {
-  // ...
-  return (
-    <div id="surveyVizPanel" />
-  );
-}
-```
-
-To render the Visualization Panel in the page element, call the `render(containerId)` method on the Visualization Panel instance you created in the previous step:
+If your dashboard is not based on a survey schema, configure all items explicitly. Populate the [`items`](/dashboard/documentation/api-reference/idashboardoptions#items) array with [`IDashboardItemOptions`](/dashboard/documentation/api-reference/idashboarditemoptions) objects. Use the [`name`](/dashboard/documentation/api-reference/idashboarditemoptions#name) property to bind each item to a data field.
 
 ```js
-import { ..., useEffect } from 'react';
+// components/Dashboard.tsx
+// ...
+import { useEffect, useState } from 'react';
+import { Model } from 'survey-core';
+import { Dashboard } from 'survey-analytics';
 
-export default function App() {
-  // ...
+const SURVEY_ID = 1;
+
+const surveyJson = { /* ... */ };
+const surveyResults = [ /* ... */ ];
+
+export default function DashboardComponent() {
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
 
   useEffect(() => {
-    vizPanel.render("surveyVizPanel");
-    return () => {
-      document.getElementById("surveyVizPanel").innerHTML = "";
-    }
-  }, [vizPanel]);
+    const survey = new Model(surveyJson);
 
-  // ...
+    const dashboardInstance = new Dashboard({
+      data: surveyResults,
+      items: [
+        {
+          name: "satisfaction-score",
+          type: "bar",
+          title: "CSAT",
+          availableTypes: [ "bar", "vbar", "pie", "gauge" ]
+        },
+        {
+          name: "nps-score",
+          type: "nps",
+          title: "NPS Score",
+          allowChangeType: false
+        }
+      ]
+    });
+
+    setDashboard(dashboardInstance);
+  }, []);
+
+  return "...";
 }
 ```
-
-To view the application, run `npm run start` in a command line and open [http://localhost:3000/](http://localhost:3000/) in your browser.
 
 <details>
-    <summary>View full code</summary>
+    <summary>View Full Code</summary>
 
 ```js
-import { useState, useEffect } from 'react';
-import 'survey-analytics/survey.analytics.min.css';
+// app/layout.tsx or pages/_app.tsx
+import '@fontsource/open-sans/400.css';
+import '@fontsource/open-sans/600.css';
+import '@fontsource/open-sans/700.css';
+```
+
+```js
+// components/Dashboard.tsx
+import 'survey-analytics/survey.analytics.css';
+import { useState } from 'react';
 import { Model } from 'survey-core';
-import { VisualizationPanel } from 'survey-analytics';
+import { IDashboardOptions, Dashboard } from 'survey-analytics';
 
 const surveyJson = {
   elements: [{
@@ -312,65 +385,218 @@ const surveyJson = {
     rateMin: 0,
     rateMax: 10,
   }],
-  showQuestionNumbers: "off",
   completedHtml: "Thank you for your feedback!",
 };
 
-const surveyResults = [{
-  "satisfaction-score": 5,
-  "nps-score": 10
-}, {
-  "satisfaction-score": 5,
-  "nps-score": 9
-}, {
-  "satisfaction-score": 3,
-  "nps-score": 6
-}, {
-  "satisfaction-score": 3,
-  "nps-score": 6
-}, {
-  "satisfaction-score": 2,
-  "nps-score": 3
-}];
+const surveyResults = [
+  { "satisfaction-score": 5, "nps-score": 10 },
+  { "satisfaction-score": 5, "nps-score": 9 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 2, "nps-score": 3 }
+];
 
-const vizPanelOptions = {
-  allowHideQuestions: false
-}
-
-export default function App() {
-  const [survey, setSurvey] = useState(null);
-  const [vizPanel, setVizPanel] = useState(null);
-  if (!survey) {
-    const survey = new Model(surveyJson);
-    setSurvey(survey);
-  }
-
-  if (!vizPanel && !!survey) {
-    const vizPanel = new VisualizationPanel(
-      survey.getAllQuestions(),
-      surveyResults,
-      vizPanelOptions
-    );
-    vizPanel.showHeader = false;
-    setVizPanel(vizPanel);
-  }
+export default function DashboardComponent() {
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
 
   useEffect(() => {
-    vizPanel.render("surveyVizPanel");
+    const survey = new Model(surveyJson);
+
+    const dashboardInstance = new Dashboard({
+      data: surveyResults,
+      items: [
+        {
+          name: "satisfaction-score",
+          type: "bar",
+          title: "CSAT",
+          availableTypes: [ "bar", "vbar", "pie", "gauge" ]
+        },
+        {
+          name: "nps-score",
+          type: "nps",
+          title: "NPS Score",
+          allowChangeType: false
+        }
+      ]
+    });
+
+    setDashboard(dashboardInstance);
+  }, []);
+
+  return "...";
+}
+```
+
+</details>
+
+<div id="render-the-visualization-panel"></div>
+
+## Render the Dashboard
+
+Add a container element to the component template and call the [`render(containerId)`](/dashboard/documentation/api-reference/dashboard#render) method on the `Dashboard` instance you configured to mount the dashboard.
+
+> SurveyJS components are client-side components. Explicitly mark the React component that renders a SurveyJS component as client code using the ['use client'](https://react.dev/reference/react/use-client) directive.
+
+```js
+// components/Dashboard.tsx
+'use client'
+// ...
+import { useEffect } from 'react';
+
+export default function DashboardComponent() {
+  // ...
+  useEffect(() => {
+    // ...
+    // Render the dashboard
+    dashboardInstance.render("dashboard");
+
+    // Cleanup when component unmounts
     return () => {
-      document.getElementById("surveyVizPanel").innerHTML = "";
-    }
-  }, [vizPanel]);
+      dashboardInstance.clear();
+    };
+  }, []);
 
   return (
-    <div id="surveyVizPanel" />
+    <div id="dashboard" />
   );
 }
 ```
+
+The lack of SSR support may cause hydration errors if a SurveyJS component is pre-rendered on the server. To ensure against those errors, use dynamic imports with `ssr: false` for React components that render SurveyJS components. The following code shows how to do this in Next.js:
+
+```js
+// dashboard/page.tsx
+import dynamic from "next/dynamic";
+
+const Dashboard = dynamic(() => import('@/components/Dashboard'), {
+  ssr: false,
+});
+
+export default function SurveyDashboard() {
+  return (
+    <Dashboard />
+  );
+}
+```
+
+Run the application with `npm run dev` and open [http://localhost:3000/](http://localhost:3000/) in your browser.
+
+<details>
+    <summary>View Full Code</summary>
+
+```js
+// app/layout.tsx or pages/_app.tsx
+import '@fontsource/open-sans/400.css';
+import '@fontsource/open-sans/600.css';
+import '@fontsource/open-sans/700.css';
+```
+
+```js
+// components/Dashboard.tsx
+'use client'
+
+import { useState, useEffect } from 'react';
+import 'survey-analytics/survey.analytics.css';
+import { Model } from 'survey-core';
+import { Dashboard } from 'survey-analytics';
+
+const surveyJson = {
+  elements: [{
+    name: "satisfaction-score",
+    title: "How would you describe your experience with our product?",
+    type: "radiogroup",
+    choices: [
+      { value: 5, text: "Fully satisfying" },
+      { value: 4, text: "Generally satisfying" },
+      { value: 3, text: "Neutral" },
+      { value: 2, text: "Rather unsatisfying" },
+      { value: 1, text: "Not satisfying at all" }
+    ],
+    isRequired: true
+  }, {
+    name: "nps-score",
+    title: "On a scale of zero to ten, how likely are you to recommend our product to a friend or colleague?",
+    type: "rating",
+    rateMin: 0,
+    rateMax: 10,
+  }],
+  completedHtml: "Thank you for your feedback!",
+};
+
+const surveyResults = [
+  { "satisfaction-score": 5, "nps-score": 10 },
+  { "satisfaction-score": 5, "nps-score": 9 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 3, "nps-score": 6 },
+  { "satisfaction-score": 2, "nps-score": 3 }
+];
+
+export default function DashboardComponent() {
+  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
+
+  useEffect(() => {
+    const survey = new Model(surveyJson);
+
+    const dashboardInstance = new Dashboard({
+      questions: survey.getAllQuestions(),
+      data: surveyResults,
+      items: [
+        "satisfaction-score",
+        {
+          name: "nps-score",
+          type: "nps"
+        }
+      ]
+    });
+
+    setDashboard(dashboardInstance);
+
+    dashboardInstance.render("dashboard");
+
+    return () => {
+      dashboardInstance.clear();
+    };
+  }, []);
+
+  return (
+    <div id="dashboard" />
+  );
+}
+```
+
+```js
+// dashboard/page.tsx
+import dynamic from "next/dynamic";
+
+const Dashboard = dynamic(() => import('@/components/Dashboard'), {
+  ssr: false,
+});
+
+export default function SurveyDashboard() {
+  return (
+    <Dashboard />
+  );
+}
+```
+
 </details>
 
-<a href="https://github.com/surveyjs/code-examples/tree/main/get-started-analytics/react" target="_blank">View full code on GitHub</a>
+[View Full Code on GitHub](https://github.com/surveyjs/code-examples/tree/main/get-started-analytics/react (linkStyle))
 
-## Further Reading
+## Activate a SurveyJS License
 
-- [Analytics Demo Examples](/Examples/Analytics)
+SurveyJS Dashboard is not available for free commercial use. To integrate it into your application, you must purchase a [commercial license](https://surveyjs.io/licensing) for the software developer(s) who will be working with the Dashboard APIs and implementing the integration. If you use SurveyJS Dashboard without a license, an alert banner will appear at the top of the interface:
+
+<img src="images/alert-banner-dashboard.png" alt="SurveyJS Dashboard: Alert banner" width="1544" height="656">
+
+After purchasing a license, follow the steps below to activate it and remove the alert banner:
+
+1. [Log in](https://surveyjs.io/login) to the SurveyJS website using your email address and password. If you've forgotten your password, [request a reset](https://surveyjs.io/reset-password) and check your inbox for the reset link.
+2. Open the following page: [How to Remove the Alert Banner](https://surveyjs.io/remove-alert-banner). You can also access it by clicking **Set up your license key** in the alert banner itself.
+3. Follow the instructions on that page.
+
+Once you've completed the setup correctly, the alert banner will no longer appear.
+
+## See Also
+
+[Dashboard Demo Examples](/dashboard/examples/ (linkStyle))

@@ -1,29 +1,40 @@
-@import "globals";
+@use "typography-mixins.scss" as *;
+
+.sa-visualizer-wrapper {
+  min-width: 450px;
+  padding: var(--sjs2-spacing-x300, 24px);
+  background: var(--sjs2-color-utility-surface-dashboard, rgba(28, 27, 32, 0.05));
+
+  @media screen and (max-width: 600px) {
+    min-width: auto;
+    padding: var(--sjs2-spacing-x150, 12px);
+  }
+}
 
 .sa-visualizer__toolbar {
 }
 
 .sa-visualizer__header {
-  font-family: Raleway;
-  font-size: 14px;
+  @include sjs2--typography--default;
 }
 
 .sa-visualizer__content {
-  font-family: SegoeUI, Arial, sans-serif;
+  font-family: var(--sjs2-typography-font-family-text);
   display: inline-block;
-  overflow: hidden;
   width: 100%;
 }
 
-.sa-visualizer__footer {
+.sa-visualizer__footer--has-content {
   margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .sa-visualizer__footer-title {
+  @include sjs2--typography--default-strong;
   display: inline-block;
-  font-family: Raleway;
-  font-size: 14px;
-  color: #404040;
+  color: var(--sjs2-color-fg-basic-secondary);
   line-height: 34px;
   vertical-align: middle;
   margin: 0;
@@ -31,4 +42,28 @@
 
 .sa-visualizer__footer-content {
   margin-top: 10px;
+}
+
+.sa-data-loading-indicator-panel {
+  width: 100%;
+  min-height: 200px;
+  position: relative;
+}
+
+.sa-data-loading-indicator {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  left: calc((100% - 64px) / 2);
+  top: calc((100% - 64px) / 2);
+  animation: sa-data-loading-indicator-spinner 1s infinite linear;
+}
+
+@keyframes sa-data-loading-indicator-spinner {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(359deg);
+  }
 }

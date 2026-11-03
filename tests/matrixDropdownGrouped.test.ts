@@ -53,6 +53,7 @@ beforeEach(() => {
 
 test("valuesSource method", () => {
   const values = matrix.valuesSource().map((itemValue) => itemValue.text);
+  expect(values).toHaveLength(matrixJson.choices.length); // 6 values
   expect(values).toEqual(matrixJson.choices);
 });
 
@@ -65,37 +66,39 @@ test("getLabels method", () => {
 });
 
 test("getSeriesValues method", () => {
-  expect(matrix.getSeriesValues()).toEqual(columns);
+  const seriesValues = matrix.getSeriesValues();
+  expect(seriesValues).toHaveLength(columns.length);
+  expect(seriesValues).toEqual(columns);
 });
 
 test("getSeriesLabels method", () => {
   expect(matrix.getSeriesLabels()).toEqual(columns);
 });
 
-test("dataName property", () => {
-  expect(matrix.dataName).toEqual(columns);
+test("name and dataNames property", () => {
+  expect(matrix.name).toEqual("question1");
+  expect(matrix.dataNames).toEqual(columns);
 });
 
-test("getData method", () => {
-  expect(matrix.getData()).toEqual([
-    [1, 1, 0],
-    [1, 1, 0],
-    [1, 1, 1],
-    [0, 0, 1],
-    [0, 0, 1],
-    [0, 0, 0],
-  ].reverse());
+test("getCalculatedValues method", async () => {
+  const data = (await matrix.getCalculatedValues()).data;
+  expect(data).toEqual([
+    [0, 0, 0, 1, 1, 1],
+    [0, 0, 0, 1, 1, 1],
+    [0, 1, 1, 1, 0, 0],
+  ]);
 });
 
 test("check getPercentages method", () => {
-  expect(matrix.getPercentages()).toEqual([
-    [33, 33, 0],
-    [33, 33, 0],
-    [33, 33, 33],
-    [0, 0, 33],
-    [0, 0, 33],
-    [0, 0, 0],
-  ].reverse());
+  expect(matrix.getPercentages([
+    [0, 0, 0, 1, 1, 1],
+    [0, 0, 0, 1, 1, 1],
+    [0, 1, 1, 1, 0, 0],
+  ])).toEqual([
+    [0, 0, 0, 33.33, 50, 50],
+    [0, 0, 0, 33.33, 50, 50],
+    [0, 100, 100, 33.33, 0, 0],
+  ]);
 });
 
 test("SupportMissingAnswers", () => {

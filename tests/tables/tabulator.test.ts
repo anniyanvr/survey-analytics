@@ -1,9 +1,25 @@
-import { SurveyModel } from "survey-core";
-import { Tabulator } from "../../src/tables/tabulator";
+import { Question, SurveyModel } from "survey-core";
+import { localization } from "../../src/localizationManager";
+import { vi } from "vitest";
+// eslint-disable-next-line surveyjs/no-imports-from-entries
+import { Tabulator } from "../../src/entries/tabulator-umd";
+import { TableExtensions } from "../../src/tables/extensions/tableextensions";
+import { Table } from "../../src/tables/table";
+import { ColumnDataType } from "../../src/tables/config";
 
-jest.mock("tabulator-tables", () => {
-  return { default: jest.requireActual("tabulator-tables") };
+vi.mock("tabulator-tables", async () => {
+  const tabulatorModule = await vi.importActual<any>("tabulator-tables");
+  return { default: tabulatorModule.TabulatorFull || tabulatorModule.Tabulator };
 });
+
+const trueTimeout = window.setTimeout;
+
+function mockTimeout() {
+  window.setTimeout = (callback) => { callback(); };
+}
+function restoreTimeout() {
+  window.setTimeout = trueTimeout;
+}
 
 const json = {
   questions: [
@@ -38,9 +54,55 @@ test("getColumns method", () => {
 
   const columns = <any>tabulator["getColumns"]();
 
-  expect(JSON.stringify(columns)).toBe(
-    '[{"field":"","title":"","download":false,"resizable":false,"minWidth":60,"width":60},{"field":"car","title":"What car are you driving?","widthShrink":1,"visible":true,"headerSort":false,"formatter":"plaintext"},{"field":"photo","title":"photo","widthShrink":1,"visible":true,"headerSort":false,"formatter":"html"}]'
+  expect(typeof columns[1].headerTooltip).toBe("function");
+  expect(JSON.parse(JSON.stringify(columns))).toEqual(
+    [{ "headerSort": false, "download": false, "resizable": false, "minWidth": 56, "width": 56 }, { "field": "car", "title": "What car are you driving?", "widthShrink": 1, "visible": true, "headerSort": false, "minWidth": 384, "formatter": "plaintext", "headerWordWrap": true }, { "field": "photo", "title": "photo", "widthShrink": 1, "visible": true, "headerSort": false, "minWidth": 384, "formatter": "html", "headerWordWrap": true }]
   );
+});
+
+const xssTitle = "Which of the following best describes you or your organization?<button id='xyz' onclick='alert();'>hello</button><img src='dymmy' onerror='alert(\"xss\");'>";
+const xssJson = {
+  questions: [
+    {
+      type: "text",
+      name: "text",
+      title: xssTitle,
+    },
+  ],
+};
+
+test("strip html from column titles by default to prevent xss", () => {
+  const survey = new SurveyModel(xssJson);
+  const tabulator = new Tabulator(survey, [], null);
+
+  expect(tabulator.columns[0].displayName).toBe("Which of the following best describes you or your organization?hello");
+
+  const columns = <any>tabulator["getColumns"]();
+  expect(columns[1].title).toBe("Which of the following best describes you or your organization?hello");
+});
+
+test("keep html in column titles when stripHtmlFromTitles is false", () => {
+  const survey = new SurveyModel(xssJson);
+  const tabulator = new Tabulator(survey, [], { stripHtmlFromTitles: false });
+
+  expect(tabulator.columns[0].displayName).toBe(xssTitle);
+});
+
+test("header tooltip content is escaped and cannot inject html", () => {
+  const survey = new SurveyModel(xssJson);
+  const tabulator = new Tabulator(survey, [], { stripHtmlFromTitles: false });
+
+  const columns = <any>tabulator["getColumns"]();
+  const tooltipContent = columns[1].headerTooltip(new MouseEvent("mousemove"), {
+    getDefinition: () => ({ title: columns[1].title }),
+  });
+
+  // Tabulator injects tooltip content via innerHTML - emulate it
+  const tooltipElement = document.createElement("div");
+  tooltipElement.innerHTML = tooltipContent;
+  expect(tooltipElement.querySelector("button")).toBeNull();
+  expect(tooltipElement.querySelector("img")).toBeNull();
+  expect(tooltipElement.textContent).toBe(xssTitle);
 });
 
 test("move column callback", () => {
@@ -66,11 +128,14 @@ test("move column callback", () => {
   };
   const survey = new SurveyModel(json);
   const tabulator = new Tabulator(survey, [], null);
-  tabulator.render(document.createElement("table"));
-  (<any>tabulator).tabulatorTables.moveColumn("q1", "q3", true);
-  var trueOrder = ["q2", "q3", "q1", "q4"];
-  var order = tabulator.columns.map((column) => column.name);
+  const tableContainer = document.createElement("div");
+  mockTimeout();
+  tabulator.render(tableContainer);
+  tabulator["tabulatorTables"].moveColumn("q1", "q3", true);
+  const trueOrder = ["q2", "q3", "q1", "q4"];
+  const order = tabulator.columns.map((column) => column.name);
   expect(order).toEqual(trueOrder);
+  restoreTimeout();
 });
 
 test("check that tabulator takes into account column's width", () => {
@@ -93,7 +158,7 @@ test("check that tabulator takes into account column's width", () => {
       isPublic: true,
       location: 0,
     },
-  ];
+  ] as any;
   var tabulatorColumns = tabulator.getColumns();
   expect(tabulatorColumns[1].width).toBe(50);
   expect(tabulatorColumns[1].widthShrink).toBe(0);
@@ -101,8 +166,14 @@ test("check that tabulator takes into account column's width", () => {
   expect(tabulatorColumns[2].widthShrink).toBe(1);
 });
 
-test("check that tabulator take into account column's width after layout (check widthShrink)", () => {
+test("check that tabulator take into account column's width after layout (check widthShrink)", async () => {
+  mockTimeout();
   const tabulator = new Tabulator(new SurveyModel(null), [], null);
+  const rendered = new Promise((resolve) => {
+    tabulator.onAfterRender.add((sender, options) => {
+      resolve(options);
+    });
+  });
   tabulator.columns = [
     {
       name: "q1",
@@ -112,14 +183,17 @@ test("check that tabulator take into account column's width after layout (check 
       isPublic: true,
       location: 0,
     },
-  ];
+  ] as any;
   tabulator.render(document.createElement("table"));
-  var columnDefinitions = tabulator.tabulatorTables.getColumnDefinitions();
+  await rendered;
+  expect(tabulator.isRendered).toBe(true);
+  const columnDefinitions = tabulator.tabulatorTables.getColumnDefinitions();
   expect(columnDefinitions[1].width).toBe(undefined);
   expect(columnDefinitions[1].widthShrink).toBe(1);
   tabulator.setColumnWidth("q1", 150);
   expect(columnDefinitions[1].width).toBe(150);
   expect(columnDefinitions[1].widthShrink).toBe(0);
+  restoreTimeout();
 });
 
 test("check that tabulator take into account downloadRowRange option", () => {
@@ -129,6 +203,76 @@ test("check that tabulator take into account downloadRowRange option", () => {
   (<any>tabulator).options.tabulatorOptions.downloadRowRange = "active";
   tabulator.render(document.createElement("table"));
   expect(tabulator.tabulatorTables.options.downloadRowRange).toBe("active");
+});
+
+test.each(["ar", "fa", "he", "ar-SA"])("tabulator uses rtl mode for %s", (locale) => {
+  const prevLocale = localization.currentLocale;
+  mockTimeout();
+  try {
+    const survey = new SurveyModel(json);
+    survey.locale = locale;
+    const container = document.createElement("div");
+    const tabulator = new Tabulator(survey, [], null);
+    tabulator.render(container);
+    expect(container.getAttribute("dir")).toBe("rtl");
+    expect(tabulator.tabulatorTables.options.textDirection).toBe("rtl");
+    expect(container.querySelector(".tabulator").classList.contains("tabulator-rtl")).toBe(true);
+  } finally {
+    localization.currentLocale = prevLocale;
+    restoreTimeout();
+  }
+});
+
+test("tabulator stays ltr for english", () => {
+  const prevLocale = localization.currentLocale;
+  mockTimeout();
+  try {
+    const survey = new SurveyModel(json);
+    survey.locale = "en";
+    const container = document.createElement("div");
+    const tabulator = new Tabulator(survey, [], null);
+    tabulator.render(container);
+    expect(container.hasAttribute("dir")).toBe(false);
+    expect(tabulator.tabulatorTables.options.textDirection).toBe("auto");
+    expect(container.querySelector(".tabulator").classList.contains("tabulator-rtl")).toBe(false);
+  } finally {
+    localization.currentLocale = prevLocale;
+    restoreTimeout();
+  }
+});
+
+test("tabulator textDirection option overrides rtl locale direction", () => {
+  const prevLocale = localization.currentLocale;
+  mockTimeout();
+  try {
+    const survey = new SurveyModel(json);
+    survey.locale = "ar";
+    const tabulator = new Tabulator(survey, [], { tabulatorOptions: { textDirection: "ltr" } });
+    tabulator.render(document.createElement("div"));
+    expect(tabulator.tabulatorTables.options.textDirection).toBe("ltr");
+  } finally {
+    localization.currentLocale = prevLocale;
+    restoreTimeout();
+  }
+});
+
+test("tabulator switches to rtl when the locale changes", () => {
+  const prevLocale = localization.currentLocale;
+  mockTimeout();
+  try {
+    const survey = new SurveyModel(json);
+    const container = document.createElement("div");
+    const tabulator = new Tabulator(survey, [], null);
+    tabulator.render(container);
+    expect(tabulator.tabulatorTables.options.textDirection).toBe("auto");
+    tabulator.locale = "fa";
+    expect(container.getAttribute("dir")).toBe("rtl");
+    expect(tabulator.tabulatorTables.options.textDirection).toBe("rtl");
+    expect(container.querySelector(".tabulator").classList.contains("tabulator-rtl")).toBe(true);
+  } finally {
+    localization.currentLocale = prevLocale;
+    restoreTimeout();
+  }
 });
 
 test("check that tabulator take into account downloadHiddenColumns option", () => {
@@ -142,22 +286,22 @@ test("check that tabulator take into account downloadHiddenColumns option", () =
       isPublic: true,
       location: 0,
     },
-  ];
-
+  ] as any;
+  mockTimeout();
   tabulator.render(document.createElement("table"));
-  expect(tabulator.tabulatorTables.getColumnDefinitions()[1].download).toBe(
-    undefined
-  );
-
+  expect(tabulator.tabulatorTables.getColumnDefinitions()[1].download).toBe(undefined);
   (<any>tabulator).options.downloadHiddenColumns = true;
   tabulator.render(document.createElement("table"));
+
   expect(tabulator.tabulatorTables.getColumnDefinitions()[1].download).toBe(
     true
   );
+  restoreTimeout();
 });
 
 test("check that action column doesn't export", () => {
   const tabulator = new Tabulator(new SurveyModel(null), [], null);
+  mockTimeout();
   tabulator.render(document.createElement("table"));
   expect(tabulator.tabulatorTables.getColumnDefinitions()[0].download).toBe(
     false
@@ -167,6 +311,7 @@ test("check that action column doesn't export", () => {
   expect(tabulator.tabulatorTables.getColumnDefinitions()[0].download).toBe(
     false
   );
+  restoreTimeout();
 });
 
 test("useNamesAsTitles option", () => {
@@ -183,18 +328,18 @@ test("useNamesAsTitles option", () => {
 
   let tabulator = new Tabulator(survey, [], null);
   let columns = <any>tabulator.getColumns();
-  expect(JSON.stringify(columns)).toBe(
-    "[{\"field\":\"\",\"title\":\"\",\"download\":false,\"resizable\":false,\"minWidth\":60,\"width\":60},{\"field\":\"str\",\"title\":\"String\",\"widthShrink\":1,\"visible\":true,\"headerSort\":false,\"formatter\":\"plaintext\"}]"
+  expect(JSON.parse(JSON.stringify(columns))).toEqual(
+    [{ "headerSort": false, "download": false, "resizable": false, "minWidth": 56, "width": 56 }, { "field": "str", "title": "String", "widthShrink": 1, "visible": true, "headerSort": false, "formatter": "plaintext", minWidth: 384, "headerWordWrap": true }]
   );
 
   tabulator = new Tabulator(survey, [], <any>{ useNamesAsTitles: true });
   columns = <any>tabulator.getColumns();
-  expect(JSON.stringify(columns)).toBe(
-    "[{\"field\":\"\",\"title\":\"\",\"download\":false,\"resizable\":false,\"minWidth\":60,\"width\":60},{\"field\":\"str\",\"title\":\"str\",\"widthShrink\":1,\"visible\":true,\"headerSort\":false,\"formatter\":\"plaintext\"}]"
+  expect(JSON.parse(JSON.stringify(columns))).toEqual(
+    [{ "headerSort": false, "download": false, "resizable": false, "minWidth": 56, "width": 56 }, { "field": "str", "title": "str", "widthShrink": 1, "visible": true, "headerSort": false, "formatter": "plaintext", minWidth: 384, "headerWordWrap": true }]
   );
 });
 
-test("check pdf options before download", () => {
+test("check pdf options before download", async () => {
   const surveyJson = {
     questions: [
       {
@@ -224,8 +369,16 @@ test("check pdf options before download", () => {
     ],
   };
   const survey = new SurveyModel(surveyJson);
+  mockTimeout();
   const tabulator = new Tabulator(survey, [], null);
+  const rendered = new Promise((resolve) => {
+    tabulator.onAfterRender.add((sender, options) => {
+      resolve(options);
+    });
+  });
   tabulator.render(document.createElement("div"));
+  await rendered;
+  expect(tabulator.isRendered).toBe(true);
   let options = tabulator["getDownloadOptions"]("pdf");
   expect(options.jsPDF.format).toEqual([595.28, 1120.32]);
   tabulator.setColumnVisibility("question 1", false);
@@ -237,6 +390,7 @@ test("check pdf options before download", () => {
   tabulator.setColumnVisibility("question 3", false);
   options = tabulator["getDownloadOptions"]("pdf");
   expect(options.jsPDF).toEqual(undefined); //a4 default format
+  restoreTimeout();
 });
 
 test("image and file export formatter", () => {
@@ -256,7 +410,6 @@ test("image and file export formatter", () => {
     ],
   };
   const survey = new SurveyModel(surveyJson);
-
   const data = [{
     signature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA",
     "image": [
@@ -268,9 +421,371 @@ test("image and file export formatter", () => {
   const columns = <any>tabulator.getColumns();
   const accessorDownload: any = columns[1].accessorDownload;
 
-  const fileCell = accessorDownload(undefined, undefined, undefined, undefined, { getDefinition: () => ({ field: "image" }) }, { getPosition: () => 0 });
+  const fileCell = accessorDownload(undefined, undefined, undefined, undefined, { getDefinition: () => ({ field: "image" }) }, { getData: () => { return { "surveyOriginalData": data[0] }; } });
   expect(fileCell).toBe("file1.png, file2.png");
 
-  const imageCell = accessorDownload(undefined, undefined, undefined, undefined, { getDefinition: () => ({ field: "signature" }) }, { getPosition: () => 0 });
+  const imageCell = accessorDownload(undefined, data[0], undefined, undefined, { getDefinition: () => ({ field: "signature" }) }, { getData: () => { return { "surveyOriginalData": data[0] }; } });
   expect(imageCell).toBe("signature");
+
+  // After state introduces an extra column, download accessor must still resolve columns via refreshed cache.
+  tabulator.state = {
+    ...tabulator.state,
+    elements: [
+      ...tabulator.state.elements,
+      {
+        name: "extra",
+        displayName: "extra",
+        dataType: ColumnDataType.Text,
+        isVisible: true,
+        isPublic: true,
+        location: 0,
+      }
+    ]
+  };
+  expect(tabulator.getColumnByName("extra")?.name).toBe("extra");
+  expect(tabulator.getColumnByName("image")?.name).toBe("image");
+});
+test("check getDataPosition returns correct index", () => {
+  const surveyJson = {
+    questions: [
+      {
+        type: "text",
+        name: "question1",
+      },
+    ],
+  };
+  const survey = new SurveyModel(surveyJson);
+  const tabulator = new Tabulator(survey, [
+    {
+      question1: "test1"
+    },
+    {
+      question1: "test2"
+    },
+    {
+      question1: "test3"
+    }
+  ], null);
+  mockTimeout();
+  tabulator.render(document.createElement("div"));
+  tabulator.tabulatorTables.rowManager.activeRows.forEach(row => tabulator["rowFormatter"](row));
+  const rows = tabulator.getCreatedRows();
+  expect(rows[2].getDataPosition()).toBe(2);
+  tabulator["data"].splice(0, 1);
+  expect(rows[2].getDataPosition()).toBe(1);
+  tabulator["data"].splice(0, 1);
+  expect(rows[2].getDataPosition()).toBe(0);
+  restoreTimeout();
+});
+
+test("Tabulator allowSorting option", () => {
+  TableExtensions.registerExtension({
+    location: "column",
+    name: "sort",
+    visibleIndex: 1,
+    render: function (table: Table, options: any) {
+      const ext = document.createElement("div");
+      ext.className = "sorting";
+      return ext;
+    },
+  } as any);
+  let tabulator = new Tabulator(new SurveyModel({ questions: [{ type: "text", name: "q1" }] }), [], undefined as any);
+  let tableExtensions = new TableExtensions(tabulator);
+
+  let tableNode = document.createElement("div");
+  tableExtensions.render(tableNode, "column");
+
+  expect(tableNode.innerHTML).toContain("sorting");
+
+  tabulator = new Tabulator(new SurveyModel({ questions: [{ type: "text", name: "q1" }] }), [], { allowSorting: false } as any);
+  tableExtensions = new TableExtensions(tabulator);
+
+  tableNode = document.createElement("div");
+  tableExtensions.render(tableNode, "column");
+
+  expect(tableNode.innerHTML.indexOf("sorting")).toBe(-1);
+
+  TableExtensions.unregisterExtension("column", "sort");
+});
+test("setFilter", () => {
+  const surveyJson = {
+    questions: [
+      {
+        type: "signaturepad",
+        name: "signature",
+        title:
+          "Signature",
+      },
+      {
+        type: "file",
+        title: "Please upload your photo",
+        name: "image"
+      }
+    ],
+  };
+  const survey = new SurveyModel(surveyJson);
+  const data = [{
+    signature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA",
+    "image": [
+      { "name": "file1.png", "type": "image/png", "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA" },
+      { "name": "file2.png", "type": "image/png", "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA" }]
+  }];
+
+  const tabulator = new Tabulator(survey, data);
+  let results = [];
+  tabulator.tabulatorTables = {
+    setFilter: (customFilter, params) => {
+      results = [
+        {
+          signature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA",
+          "image": [
+            { "name": "file1.png", "type": "image/png", "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA" },
+            { "name": "file2.png", "type": "image/png", "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA" }],
+          surveyOriginalData: {
+            signature: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA",
+            "image": [
+              { "name": "file1.png", "type": "image/png", "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA" },
+              { "name": "file2.png", "type": "image/png", "content": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAASwAAADICAYAAABS39xVAA" }],
+          },
+        },
+        {},
+        {
+          kay: undefined
+        },
+        {
+          kay: "valid"
+        },
+        {
+          kay: null
+        },
+        {
+          kay: 0
+        },
+        {
+          kay: 1
+        },
+        {
+          kay: true
+        },
+        {
+          kay: NaN
+        }
+      ].map((row) => {
+        return customFilter(row, params);
+      }) as any;
+    },
+  } as any;
+  tabulator.applyFilter("data:image/png;base64,");
+  expect(results).toStrictEqual([
+    true,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+  ]);
+});
+
+test("onStateChanged for question ready from choicesByUrl", async () => {
+  const surveyJson = {
+    "pages": [
+      {
+        "name": "page1",
+        "elements": [
+          {
+            "type": "text",
+            "name": "question1",
+            "inputType": "number"
+          },
+          {
+            "type": "dropdown",
+            "name": "question3",
+            "choices": [
+              {
+                "value": "Item 1",
+              },
+              {
+                "value": "Item 2",
+              }
+            ]
+          },
+          {
+            "type": "dropdown",
+            "name": "question5",
+            "choicesByUrl": {
+              "url": "https://someurl.com?mode=counties",
+              "valueName": "value",
+              "titleName": "text"
+            }
+          },
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(surveyJson);
+  const tabulator = new Tabulator(survey, [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}]);
+  expect(tabulator["getColumns"]().length).toBe(4);
+  let stateChangedCounter = 0;
+  tabulator.onStateChanged.add((sender, options) => {
+    stateChangedCounter++;
+  });
+  tabulator.render(document.createElement("div"));
+  const allQuestions = survey.getAllQuestions();
+  for(let index in allQuestions) {
+    setTimeout(() => {
+      allQuestions[index]["isReadyValue"] = true;
+      allQuestions[index].onReadyChanged.fire(allQuestions[index], {
+        question: allQuestions[index],
+        isReady: true,
+        oldIsReady: false,
+      });
+    }, 1);
+    await allQuestions[index].waitForQuestionIsReady();
+  }
+  expect(stateChangedCounter).toBe(0);
+});
+
+test("check splitMultiSelectIntoColumns option in Tabulator", () => {
+  const surveyJson = {
+    questions: [
+      {
+        type: "checkbox",
+        name: "fav_cars",
+        title: "Favorite Cars",
+        choices: [
+          { value: "car1", text: "Car 1" },
+          { value: "car2", text: "Car 2" },
+          { value: "car3", text: "Car 3" }
+        ]
+      }
+    ]
+  };
+
+  const survey = new SurveyModel(surveyJson);
+  const data = [
+    { fav_cars: ["car1", "car2"] },
+    { fav_cars: ["car2"] },
+    { fav_cars: [] }
+  ];
+
+  const tabulator = new Tabulator(survey, data, { splitMultiSelectIntoColumns: true });
+  const columns = tabulator.getColumns();
+
+  // First column is the actions column, next 3 are the flattened checkbox columns
+  expect(columns.length).toBe(4);
+  expect(columns[1].field).toBe("fav_cars.car1");
+  expect(columns[1].title).toBe("Favorite Cars - Car 1");
+  expect(columns[2].field).toBe("fav_cars.car2");
+  expect(columns[2].title).toBe("Favorite Cars - Car 2");
+  expect(columns[3].field).toBe("fav_cars.car3");
+  expect(columns[3].title).toBe("Favorite Cars - Car 3");
+});
+
+test("check splitMultiSelectIntoColumns option with order mode in Tabulator", () => {
+  const surveyJson = {
+    questions: [
+      {
+        type: "checkbox",
+        name: "fav_cars",
+        title: "Favorite Cars",
+        choices: [
+          { value: "car1", text: "Car 1" },
+          { value: "car2", text: "Car 2" },
+          { value: "car3", text: "Car 3" }
+        ]
+      }
+    ]
+  };
+
+  const survey = new SurveyModel(surveyJson);
+  const data = [
+    { fav_cars: ["car1", "car2"] },
+    { fav_cars: ["car2"] },
+    { fav_cars: [] }
+  ];
+
+  const tabulator = new Tabulator(survey, data, { splitMultiSelectIntoColumns: true, multiSelectColumnValueFormat: "selectionOrder" });
+  const columns = tabulator.getColumns();
+
+  // Verify columns are created correctly
+  expect(columns.length).toBe(4);
+  expect(columns[1].field).toBe("fav_cars.car1");
+  expect(columns[2].field).toBe("fav_cars.car2");
+  expect(columns[3].field).toBe("fav_cars.car3");
+});
+
+test("should default to nested tables disabled", () => {
+  const json = { questions: [{ type: "text", name: "q1" }] };
+  const survey = new SurveyModel(json);
+  const tabulator = new Tabulator(survey, []);
+
+  expect(tabulator.options.useNestedTables).toBeTruthy();
+});
+
+test("should allow enabling nested tables via options", () => {
+  const json = { questions: [{ type: "text", name: "q1" }] };
+  const survey = new SurveyModel(json);
+  const tabulator = new Tabulator(survey, [], { useNestedTables: "tabulator" });
+
+  expect(tabulator.options.useNestedTables).toBe("tabulator");
+});
+
+test("tabulator redraws on container width change outside of ResizeObserver callback (#420)", async () => {
+  const observers: Array<{ callback: () => void, target: Element, disconnected: boolean }> = [];
+  vi.stubGlobal("ResizeObserver", class {
+    private entry: { callback: () => void, target: Element, disconnected: boolean };
+    constructor(callback: () => void) {
+      this.entry = { callback, target: null, disconnected: false };
+      observers.push(this.entry);
+    }
+    observe(target: Element) { this.entry.target = target; }
+    unobserve() { }
+    disconnect() { this.entry.disconnected = true; }
+  });
+  const frames: Array<FrameRequestCallback> = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => frames.push(callback));
+  vi.stubGlobal("cancelAnimationFrame", (handle: number) => { frames[handle - 1] = undefined; });
+  const runFrames = () => frames.splice(0).forEach(callback => callback && callback(0));
+
+  mockTimeout();
+  const survey = new SurveyModel({ questions: [{ type: "text", name: "q1" }] });
+  const tabulator = new Tabulator(survey, [{ q1: "a" }]);
+  const rendered = new Promise((resolve) => {
+    tabulator.onAfterRender.add(() => resolve(undefined));
+  });
+  tabulator.render(document.createElement("div"));
+  await rendered;
+  restoreTimeout();
+
+  expect(tabulator.tabulatorTables.options.autoResize).toBe(false);
+  const containerObserver = observers.filter(o => o.target === tabulator["tableContainer"]);
+  expect(containerObserver.length).toBe(1);
+
+  const container = tabulator["tableContainer"] as HTMLElement;
+  let width = 0;
+  Object.defineProperty(container, "clientWidth", { configurable: true, get: () => width });
+  const redraw = vi.spyOn(tabulator.tabulatorTables, "redraw").mockImplementation(() => undefined);
+
+  width = 500;
+  containerObserver[0].callback();
+  expect(redraw).toHaveBeenCalledTimes(0);
+  runFrames();
+  expect(redraw).toHaveBeenCalledTimes(1);
+
+  containerObserver[0].callback();
+  runFrames();
+  expect(redraw).toHaveBeenCalledTimes(1);
+
+  width = 400;
+  containerObserver[0].callback();
+  containerObserver[0].callback();
+  runFrames();
+  expect(redraw).toHaveBeenCalledTimes(2);
+
+  tabulator.destroy();
+  expect(containerObserver[0].disconnected).toBe(true);
+  vi.unstubAllGlobals();
 });

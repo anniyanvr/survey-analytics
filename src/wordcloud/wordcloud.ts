@@ -1,10 +1,11 @@
 import { Question, Event } from "survey-core";
-import { VisualizerBase } from "../visualizerBase";
+import { ICalculationResult, VisualizerBase } from "../visualizerBase";
 import { VisualizationManager } from "../visualizationManager";
 import { textHelper } from "./stopwords/index";
-import WordCloudLib from "wordcloud";
-import { DocumentHelper } from "../utils";
+import { DocumentHelper } from "../utils/documentHelper";
 import { localization } from "../localizationManager";
+import { WordCloudWidget, defaultOptions } from "./widget";
+import { getNestedDataRows } from "../statisticCalculators";
 
 export class WordCloudAdapter {
   private _wordcloud: any;
@@ -16,135 +17,127 @@ export class WordCloudAdapter {
 
   public static onWordcloudCreating = new Event<
       (sender: WordCloud, options: any) => any,
+      WordCloud,
       any
     >();
 
   constructor(private model: WordCloud) {}
 
-  public get wordcloud() {
+  public get wordcloud(): any {
     return this._wordcloud;
   }
 
-  public create(node: HTMLElement) {
-    const data = this.model.getData();
-    const colors = this.model.getColors();
-    const canvasNode = <HTMLCanvasElement>(
-      DocumentHelper.createElement("canvas", "")
-    );
-    const emptyTextNode = <HTMLElement>DocumentHelper.createElement("p", "", {
-      innerText: localization.getString("noResults"),
-    });
+  public async create(element: HTMLElement): Promise<any> {
+    const answersData = await this.model.getAnswersData();
 
-    if (data.length === 0) {
-      node.appendChild(emptyTextNode);
+    if(answersData.datasets.length === 0 || answersData.datasets[0].length === 0) {
+      var emptyTextNode = DocumentHelper.createElement("p", "sa-no-result", {
+        innerText: localization.getString("noResults"),
+      });
+      element.appendChild(emptyTextNode);
       return;
     }
 
-    node.appendChild(canvasNode);
-
-    const config = {
-      list: data,
-      weightFactor: WordCloudAdapter.weightFactor,
-      abortThreshold: WordCloudAdapter.abortThreshold,
-      drawOutOfBound: WordCloudAdapter.drawOutOfBound,
-      shrinkToFit: WordCloudAdapter.shrinkToFit,
-      fontFamily: "Segoe UI Bold, sans-serif",
-      color: (word: string, weight: number) => {
-        return this.model.getRandomColor();
-      },
-      rotateRatio: 0.5,
-      rotationSteps: 2,
-      backgroundColor: this.model.backgroundColor,
-      click: function (item: any) {
-        // eslint-disable-next-line no-console
-        console.log(item[0] + ": " + item[1]);
-      },
-    };
-
+    const config = JSON.parse(JSON.stringify(defaultOptions));
     const options = {
-      canvas: canvasNode,
       config
     };
     WordCloudAdapter.onWordcloudCreating.fire(this.model, options);
-    this._wordcloud = WordCloudLib(options.canvas, options.config);
+    this._wordcloud = new WordCloudWidget(config);
+    this._wordcloud.colors = this.model.getColors();
+    this._wordcloud.words = answersData.values.map((w, i) => [w, answersData.datasets[0][i]]);
+    this._wordcloud.render(element);
     return this._wordcloud;
   }
 
-  public destroy(node: HTMLElement) {
+  public destroy(node: HTMLElement): void {
+    if(this._wordcloud && typeof this._wordcloud.dispose === "function") {
+      this._wordcloud.dispose();
+    }
     this._wordcloud = undefined;
   }
 }
-
 export class WordCloud extends VisualizerBase {
   private _wordcloudAdapter: WordCloudAdapter;
+  private _values = [];
 
   constructor(
     question: Question,
     data: Array<{ [index: string]: any }>,
     options?: Object,
-    name?: string
+    type?: string
   ) {
-    super(question, data, options, name || "wordcloud");
+    super(question, data, options, type || "wordcloud");
     this._wordcloudAdapter = new WordCloudAdapter(this);
   }
 
-  getData() {
+  public getValues(): Array<any> {
+    return this._values;
+  }
+
+  protected getCalculatedValuesCore(): ICalculationResult {
     let result: { [key: string]: number } = {};
 
     let stopWords: string[] = [];
     const locale = localization.currentLocale;
-    if (locale) {
+    if(locale) {
       stopWords = textHelper.getStopWords(locale);
     } else {
       stopWords = textHelper.getStopWords();
     }
+    const clearWordRegexp = new RegExp("[.,\/#!$%\^\*;:{}=\-_`~()]", "g");
 
-    let stopTheWord = (word: string) => {
-      if (stopWords.indexOf(word) !== -1) {
+    const stopTheWord = (word: string) => {
+      if(stopWords.indexOf(word) !== -1) {
         return "";
       }
       return word;
     };
 
-    let processString = (row: string) => {
+    const processString = (row: string) => {
       row = "" + row;
+      // if (row.length > 15) row = row.substring(0, 14) + "...";
 
-      if (row.length > 15) row = row.substring(0, 14) + "...";
-
-      if (!!row) {
+      if(!!row) {
         row.split(" ").forEach((word) => {
-          word = stopTheWord(word.toLowerCase() || "");
-          if (!!word) {
-            if (!result[word]) {
-              result[word] = 1;
+          let clearedWord = (word || "").toLowerCase().replace(clearWordRegexp, "");
+          clearedWord = stopTheWord(clearedWord);
+          if(!!clearedWord) {
+            if(!result[clearedWord]) {
+              result[clearedWord] = 1;
             } else {
-              result[word]++;
+              result[clearedWord]++;
             }
           }
         });
       }
     };
 
-    this.data.forEach((row) => {
-      const rowValue: any = row[this.question.name];
-      if (!!rowValue) {
-        if (Array.isArray(rowValue)) {
-          rowValue.forEach(processString);
-        } else {
-          if (typeof rowValue === "object") {
-            Object.keys(rowValue).forEach((key) =>
-              processString(rowValue[key])
-            );
+    this.surveyData.forEach((dataRow) => {
+      const nestedDataRows = getNestedDataRows(dataRow, this.dataPath);
+      nestedDataRows.forEach(row => {
+        const rowValue: any = row[this.question.name];
+        if(!!rowValue) {
+          if(Array.isArray(rowValue)) {
+            rowValue.forEach(processString);
           } else {
-            processString(rowValue);
+            if(typeof rowValue === "object") {
+              Object.keys(rowValue).forEach((key) =>
+                processString(rowValue[key])
+              );
+            } else {
+              processString(rowValue);
+            }
           }
         }
-      }
+      });
     });
 
-    return Object.keys(result).map((key) => {
-      return [key, result[key]];
-    });
+    this._values = Object.keys(result);
+    return {
+      data: [this._values.map(w => result[w])],
+      values: this._values
+    };
   }
 
   protected destroyContent(container: HTMLElement) {
@@ -152,9 +145,13 @@ export class WordCloud extends VisualizerBase {
     super.destroyContent(container);
   }
 
-  protected renderContent(container: HTMLElement) {
-    this._wordcloudAdapter.create(container);
-    this.afterRender(this.contentContainer);
+  protected async renderContentAsync(container: HTMLElement) {
+    const chartNode: HTMLElement = DocumentHelper.createElement("div");
+    container.appendChild(chartNode);
+    await this._wordcloudAdapter.create(chartNode);
+    container.innerHTML = "";
+    container.appendChild(chartNode);
+    return container;
   }
 
   destroy() {
@@ -163,6 +160,7 @@ export class WordCloud extends VisualizerBase {
   }
 }
 
-VisualizationManager.registerVisualizer("text", WordCloud);
-VisualizationManager.registerVisualizer("comment", WordCloud);
-VisualizationManager.registerVisualizer("multipletext", WordCloud);
+VisualizationManager.registerVisualizer("text", WordCloud, undefined, "wordcloud");
+VisualizationManager.registerVisualizer("comment", WordCloud, undefined, "wordcloud");
+VisualizationManager.registerVisualizer("multipletext", WordCloud, undefined, "wordcloud");
+VisualizationManager.registerVisualizer("wordcloud", WordCloud, undefined, "wordcloud");

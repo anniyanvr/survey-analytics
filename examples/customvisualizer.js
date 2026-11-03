@@ -41,7 +41,7 @@ function CustomVisualizer(question, data) {
     maxEl.appendChild(maxValEl);
     contentContainer.appendChild(maxEl);
   };
-  return new SurveyAnalytics.VisualizerBase(
+  return new SurveyAnalyticsPlotly.VisualizerBase(
     question,
     data,
     { renderContent: renderContent },
@@ -50,12 +50,12 @@ function CustomVisualizer(question, data) {
 }
 
 // Register custom visualizer for the given question type
-SurveyAnalytics.VisualizationManager.registerVisualizer(
+SurveyAnalyticsPlotly.VisualizationManager.registerVisualizer(
   "custom-question",
   CustomVisualizer
 );
 // Set localized title of this visualizer
-SurveyAnalytics.localization.locales["en"]["visualizer_minMaxVisualizer"] =
+SurveyAnalyticsPlotly.localization.locales["en"]["visualizer_minMaxVisualizer"] =
   "Min/Max Values";
 
 // Custom visualizer finds min value across all the answers on this question and shows it
@@ -64,7 +64,7 @@ function CustomMinVisualizer(question, data) {
     var result = Number.MAX_VALUE;
 
     visualizerBase.data.forEach(function (row) {
-      var rowValue = row[visualizerBase.dataName];
+      var rowValue = row[visualizerBase.name];
       if (!!rowValue) {
         if (rowValue.min < result) {
           result = rowValue.min;
@@ -87,7 +87,7 @@ function CustomMinVisualizer(question, data) {
     contentContainer.appendChild(minEl);
   };
 
-  return new SurveyAnalytics.VisualizerBase(
+  return new SurveyAnalyticsPlotly.VisualizerBase(
     question,
     data,
     {
@@ -98,10 +98,10 @@ function CustomMinVisualizer(question, data) {
 }
 
 // Register the second custom visualizer for the given question type
-SurveyAnalytics.VisualizationManager.registerVisualizer(
+SurveyAnalyticsPlotly.VisualizationManager.registerVisualizer(
   "custom-question",
   CustomMinVisualizer
 );
 // Set localized title of this visualizer
-SurveyAnalytics.localization.locales["en"]["visualizer_minVisualizer"] =
+SurveyAnalyticsPlotly.localization.locales["en"]["visualizer_minVisualizer"] =
   "Min Value Only";

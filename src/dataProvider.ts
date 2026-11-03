@@ -1,97 +1,99 @@
 import { Event } from "survey-core";
 
-/**
- * Describes data info:
- * dataName - question name, used as a key to obtain question data
- * getValues - function returning an array of all possible values
- * getLabels - function returning an array of human-friendly descriptions for values
- * getSeriesValues - function returning an array of all possible series values
- * getSeriesLabels - function returning an array of human-friendly descriptions for series values
- */
-export interface IDataInfo {
-  dataName: string | Array<string>;
-  getValues(): Array<any>;
-  getLabels(): Array<string>;
-  getSeriesValues(): Array<string>;
-  getSeriesLabels(): Array<string>;
-}
+export type SummaryFilter = { field: string, type: string, value: any };
+export type GetDataUsingCallbackFn = (params: { visualizer: any, filter?: Array<SummaryFilter>, callback?: (response: { data: Array<Object>, error?: any }) => void }) => void;
+export type GetDataUsingPromiseFn = (params: { visualizer: any, filter?: Array<SummaryFilter> }) => Promise<Array<Object>>;
+export type GetDataFn = GetDataUsingCallbackFn | GetDataUsingPromiseFn;
 
 export class DataProvider {
   public static seriesMarkerKey = "__sa_series_name";
 
   private _filteredData: Array<{ [index: string]: any }>;
-  private _statisticsCache: { [index: string]: Array<Array<number>> | Array<Array<Array<number>>> };
   protected filterValues: { [index: string]: any } = {};
+  protected systemFilterValues: { [index: string]: any } = {};
 
-  private getStatisticsCacheKey(dataInfo: IDataInfo): string {
-    if (Array.isArray(dataInfo.dataName)) {
-      return dataInfo.dataName.join("-");
+  private convertFilterValuesToSummaryFilters(filterValues: { [index: string]: any }): Array<SummaryFilter> {
+    return Object.keys(filterValues).map(key => ({ field: key, type: "=", value: filterValues[key] }));
+  }
+
+  constructor(private _data: Array<any> | GetDataFn = []) {
+  }
+
+  public get data(): Array<any> {
+    if(Array.isArray(this._data)) {
+      return this._data;
     }
-    return dataInfo.dataName;
+    return undefined;
   }
-
-  constructor(private _data: Array<any> = [], private _getDataCore: (dataInfo: IDataInfo) => number[][] = undefined) { }
-
-  public reset(dataInfo?: IDataInfo) {
-    if(!!dataInfo) {
-      if(this._statisticsCache !== undefined) {
-        const cacheKey = this.getStatisticsCacheKey(dataInfo);
-        delete this._statisticsCache[cacheKey];
-      }
-      return;
+  public set data(data: Array<any> | GetDataFn) {
+    if(Array.isArray(data)) {
+      this._data = [].concat(data);
+    } else {
+      this._data = data;
     }
-    if (
-      this._statisticsCache !== undefined ||
-      this._filteredData !== undefined
-    ) {
-      this._statisticsCache = undefined;
-      this._filteredData = undefined;
-      this.raiseDataChanged();
+    this.raiseDataChanged();
+  }
+  public get dataFn(): GetDataFn {
+    if(typeof this._data === "function") {
+      return this._data;
     }
+    return undefined;
   }
 
-  public get data() {
-    return this._data;
-  }
-  public set data(data: Array<any>) {
-    this._data = [].concat(data);
-    this.reset();
-  }
-
-  public get filteredData() {
-    if (this._filteredData === undefined) {
-      let filterKeys = Object.keys(this.filterValues);
-      if (filterKeys.length > 0) {
+  public get filteredData(): Array<any> {
+    if(this._filteredData === undefined) {
+      const filterValues = this.getFilterValues();
+      let filterKeys = Object.keys(filterValues);
+      if(filterKeys.length > 0) {
         this._filteredData = this.data.filter((item) => {
-          return !Object.keys(this.filterValues).some(
+          return !filterKeys.some(
             (key) => {
-              const filterValue = this.filterValues[key];
-              const filterValueType = typeof filterValue;
-              const questionValue = item[key];
-              if (Array.isArray(questionValue)) {
-                if (filterValueType !== "object")
-                  return questionValue.indexOf(filterValue) == -1;
+              const filterValue = filterValues[key];
+              let filterValueType: string = typeof filterValue;
+              if(filterValueType === "object" && "start" in filterValue && "end" in filterValue) {
+                filterValueType = "range";
               }
-              if (typeof questionValue === "object") {
-                if (filterValueType !== "object")
+              const questionValue = item[key];
+              if(Array.isArray(questionValue)) {
+                if(filterValueType === "object") {
+                  return !questionArrayValueContainsValue(questionValue, filterValue);
+                } else {
+                  return questionValue.indexOf(filterValue) == -1;
+                }
+              }
+              if(typeof questionValue === "object") {
+                if(filterValueType !== "object")
                   return true;
-                return !questionContainsValue(questionValue, filterValue);
+                return !questionValueContainsValue(questionValue, filterValue);
               }
               const seriesValue = item[DataProvider.seriesMarkerKey];
-              if (!!seriesValue && filterValueType === "object") {
+              if(!!seriesValue && filterValueType === "object") {
                 return questionValue !== filterValue[seriesValue];
               }
-              if (filterValueType === "object" && filterValue.start !== undefined && filterValue.end !== undefined) {
+              if(filterValueType === "range") {
+                if(filterValue.start === undefined && filterValue.end === undefined) {
+                  return false;
+                }
+
                 let continioiusValue = typeof questionValue === "number" ? questionValue : Date.parse(questionValue);
-                if (isNaN(continioiusValue)) {
+                if(isNaN(continioiusValue)) {
                   continioiusValue = parseFloat(questionValue);
-                  if (isNaN(continioiusValue)) {
+                  if(isNaN(continioiusValue)) {
                     return true;
                   }
                 }
-                return continioiusValue < filterValue.start || continioiusValue >= filterValue.end;
+                if(filterValue.start !== undefined && filterValue.end !== undefined) {
+                  return continioiusValue < filterValue.start || continioiusValue >= filterValue.end;
+                }
+                if(filterValue.start === undefined && filterValue.end !== undefined) {
+                  return continioiusValue >= filterValue.end;
+                }
+                if(filterValue.start !== undefined && filterValue.end === undefined) {
+                  return continioiusValue < filterValue.start;
+                }
+                return false;
               }
-              return item[key] !== this.filterValues[key];
+              return item[key] !== filterValues[key];
             }
           );
         });
@@ -102,104 +104,78 @@ export class DataProvider {
     return this._filteredData;
   }
 
+  private setFilterCore(questionName: string, selectedValue: any, filterObject: any): void {
+    var filterChanged = true;
+    if(selectedValue !== undefined) {
+      filterChanged = filterObject[questionName] !== selectedValue;
+      if(filterChanged) {
+        filterObject[questionName] = selectedValue;
+      }
+    } else {
+      filterChanged = filterObject[questionName] !== undefined;
+      if(filterChanged) {
+        delete filterObject[questionName];
+      }
+    }
+    if(filterChanged) {
+      this.raiseFilterChanged(questionName, selectedValue);
+      this.raiseDataChanged();
+    }
+  }
+
+  private resetFilterCore(filterObject: any): void {
+    if(Object.keys(filterObject).length === 0) {
+      return;
+    }
+    Object.keys(filterObject).forEach(key => delete filterObject[key]);
+    this.raiseFilterChanged();
+    this.raiseDataChanged();
+  }
+
+  /**
+   * Sets filter by question name and value.
+   * @since 3.0.0
+   */
+  public setSystemFilter(questionName: string, selectedValue: any): void {
+    this.setFilterCore(questionName, selectedValue, this.systemFilterValues);
+  }
+
+  /**
+   * Resets filter.
+   * @since 3.0.0
+   */
+  public resetSystemFilter(): void {
+    this.resetFilterCore(this.systemFilterValues);
+  }
+
   /**
    * Sets filter by question name and value.
    */
-  public setFilter(questionName: string, selectedValue: any) {
-    var filterChanged = true;
-    if (selectedValue !== undefined) {
-      filterChanged = this.filterValues[questionName] !== selectedValue;
-      this.filterValues[questionName] = selectedValue;
-    } else {
-      filterChanged = this.filterValues[questionName] !== undefined;
-      delete this.filterValues[questionName];
-    }
-    if (filterChanged) {
-      this.reset();
-    }
-  }
-
-  protected getDataCore(dataInfo: IDataInfo) {
-    if (!!this._getDataCore) {
-      return this._getDataCore(dataInfo);
-    }
-
-    const dataNames = Array.isArray(dataInfo.dataName) ? dataInfo.dataName : [dataInfo.dataName];
-    const statistics: Array<Array<Array<number>>> = [];
-
-    const values = dataInfo.getValues();
-    const valuesIndex: { [index: string]: number } = {};
-    values.forEach((val: any, index: number) => {
-      valuesIndex[val] = index;
-    });
-    const processMissingAnswers = values.indexOf(undefined) !== -1;
-
-    const series = dataInfo.getSeriesValues();
-    const seriesIndex: { [index: string]: number } = {};
-    series.forEach((val: any, index: number) => {
-      seriesIndex[val] = index;
-    });
-
-    const seriesLength = series.length || 1;
-    for (var i = 0; i < dataNames.length; ++i) {
-      const dataNameStatistics = new Array<Array<number>>();
-      for (var j = 0; j < seriesLength; ++j) {
-        dataNameStatistics.push(new Array<number>(values.length).fill(0));
-      }
-      statistics.push(dataNameStatistics);
-    }
-
-    this.filteredData.forEach((row: any) => {
-      dataNames.forEach((dataName, index) => {
-        const rowValue: any = row[dataName];
-        if (rowValue !== undefined || processMissingAnswers) {
-          const rowValues = Array.isArray(rowValue) ? rowValue : [rowValue];
-          if (series.length > 0) {
-            if (row[DataProvider.seriesMarkerKey] !== undefined) {
-              // Series are labelled by seriesMarkerKey in row data
-              const seriesNo =
-                seriesIndex[row[DataProvider.seriesMarkerKey]] || 0;
-              rowValues.forEach((val) => {
-                statistics[index][seriesNo][valuesIndex[val]]++;
-              });
-            } else {
-              // Series are the keys in question value (matrix question)
-              // TODO: think about the de-normalization and combine with the previous case
-              rowValues.forEach((val) => {
-                series.forEach((seriesName) => {
-                  if (val[seriesName] !== undefined) {
-                    const seriesNo = seriesIndex[seriesName] || 0;
-                    statistics[index][seriesNo][valuesIndex[val[seriesName]]]++;
-                  }
-                });
-              });
-            }
-          } else {
-            // No series
-            rowValues.forEach((val) => statistics[0][0][valuesIndex[val]]++);
-          }
-        }
-      });
-    });
-
-    return Array.isArray(dataInfo.dataName) ? statistics : statistics[0];
+  public setFilter(questionName: string, selectedValue: any): void {
+    this.setFilterCore(questionName, selectedValue, this.filterValues);
   }
 
   /**
-   * Returns calculated statisctics for the IDataInfo object.
+   * Resets filter.
    */
-  getData(dataInfo: IDataInfo) {
-    const cacheKey = this.getStatisticsCacheKey(dataInfo);
-    if (
-      this._statisticsCache === undefined ||
-      this._statisticsCache[cacheKey] === undefined
-    ) {
-      if (this._statisticsCache === undefined) {
-        this._statisticsCache = {};
-      }
-      this._statisticsCache[cacheKey] = this.getDataCore(dataInfo);
+  public resetFilter(): void {
+    this.resetFilterCore(this.filterValues);
+  }
+
+  /**
+   * Fires when data has been changed.
+   * @since 2.3.11
+   */
+  public onFilterChanged = new Event<
+    (sender: DataProvider, options: any) => any,
+    DataProvider,
+    any
+  >();
+
+  public raiseFilterChanged(questionName?: string, selectedValue?: any): void {
+    if(!this.onFilterChanged.isEmpty) {
+      this.onFilterChanged.fire(this, { questionName, selectedValue });
     }
-    return [].concat(this._statisticsCache[cacheKey]);
   }
 
   /**
@@ -207,26 +183,69 @@ export class DataProvider {
    */
   public onDataChanged = new Event<
     (sender: DataProvider, options: any) => any,
+    DataProvider,
     any
   >();
 
-  protected raiseDataChanged() {
-    if (!this.onDataChanged.isEmpty) {
-      this.onDataChanged.fire(this, {});
+  public raiseDataChanged(questionName?: string): void {
+    this._filteredData = undefined;
+    if(!this.onDataChanged.isEmpty) {
+      this.onDataChanged.fire(this, { questionName });
     }
+  }
+
+  public getAllFilters(): SummaryFilter[] {
+    const filterValues = this.getFilterValues();
+    return this.convertFilterValuesToSummaryFilters(filterValues);
+  }
+
+  public getFilters(): SummaryFilter[] {
+    return this.convertFilterValuesToSummaryFilters(this.filterValues);
+  }
+
+  public fixDropdownData(dataNames: string[]): void {
+    (this.data || []).forEach((dataItem) => {
+      let rawDataItem = dataItem[dataNames[0]];
+      if(!!rawDataItem && typeof rawDataItem === "object" && !Array.isArray(rawDataItem)) {
+        const arrayData = [];
+        Object.keys(rawDataItem).forEach((key) => {
+          var nestedDataItem = Object.assign({}, rawDataItem[key]);
+          nestedDataItem[DataProvider.seriesMarkerKey] = key;
+          arrayData.push(nestedDataItem);
+        });
+        dataItem[dataNames[0]] = arrayData;
+      }
+    });
+  }
+
+  public getCount(): Promise<number> {
+    return new Promise<number>(resolve => resolve(this.filteredData.length));
+  }
+
+  public getFilterValues(): {} {
+    const combinedFilterValues = Object.assign({}, this.systemFilterValues, this.filterValues);
+    return combinedFilterValues;
   }
 }
 
-function questionContainsValue(questionValue: any, filterValue: any) {
+function questionArrayValueContainsValue(questionValues: Array<any>, filterValue: any) {
+  for(let i = 0; i < questionValues.length; i ++) {
+    if(questionValueContainsValue(questionValues[i], filterValue)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function questionValueContainsValue(questionValue: any, filterValue: any) {
   const questionValueKeys = Object.keys(questionValue);
   const filterValueKeys = Object.keys(filterValue);
 
-  if (filterValueKeys.length > questionValueKeys.length) return false;
+  if(filterValueKeys.length > questionValueKeys.length) return false;
 
-  for (var key of filterValueKeys) {
-    if (filterValue[key] != questionValue[key]) return false;
+  for(var key of filterValueKeys) {
+    if(filterValue[key] != questionValue[key]) return false;
   }
 
   return true;
 }
-

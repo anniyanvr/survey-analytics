@@ -1,26 +1,31 @@
-import { ITableOptions, Table, TableRow } from "./table";
-import { SurveyModel } from "survey-core";
-import { ColumnDataType, IColumnData, QuestionLocation } from "./config";
-import { DocumentHelper } from "../utils";
+import { GetDataFn, Table, TableRow } from "./table";
+import { ITableOptions } from "./table-interfaces";
+import { SurveyModel, Event, Question, ItemValue, ITheme, mergeObjects, surveyLocalization } from "survey-core";
+import { ColumnDataType, IColumn, IColumnData, QuestionLocation } from "./config";
+import { DocumentHelper } from "../utils/documentHelper";
+import { stripHtml } from "../utils";
 import { localization } from "../localizationManager";
-import TabulatorTables from "tabulator-tables";
 import { ARIAL_FONT } from "./custom_jspdf_font";
+import { svgTemplate } from "../svgbundle";
+import type { DownloadType, SortDirection, TabulatorFull, RowComponent } from "tabulator-tables";
+import { TableExtensions } from "./extensions/tableextensions";
+import { DashboardTheme } from "../theme";
+import { createActionDropdown } from "../utils/dropdownActionWidget";
 
-var styles = require("./tabulator.scss");
+import "./tabulator.scss";
 
-if (!!document) {
-  const svgTemplate = require("html-loader?interpolate!val-loader!../svgbundle.html");
+if(!!document) {
   const templateHolder = document.createElement("div");
   templateHolder.style.display = "none";
   templateHolder.innerHTML = svgTemplate;
   document.head.appendChild(templateHolder);
 }
-
 interface ITabulatorOptions extends ITableOptions {
   tabulatorOptions?: any;
   downloadHiddenColumns?: boolean;
   actionsColumnWidth?: number;
-  downloadButtons: Array<string>;
+  columnMinWidth?: number;
+  downloadButtons?: Array<string>;
   downloadOptions?: { [type: string]: any };
   /*
    *use  to change options dynamically
@@ -28,6 +33,8 @@ interface ITabulatorOptions extends ITableOptions {
   onDownloadCallbacks?: {
     [type: string]: (tabulator: Tabulator, options: any) => void,
   };
+  xlsx?: any;
+  jspdf?: any;
 }
 
 export const defaultDownloadOptions = {
@@ -41,7 +48,7 @@ export const defaultDownloadOptions = {
         styles: {
           font: "custom_helvetica",
           fontStyle: "normal",
-          cellWidth: 1,
+          minCellWidth: 100,
         },
         margin: { top: 10, right: 10, bottom: 10, left: 10 },
       };
@@ -53,7 +60,8 @@ export const defaultDownloadOptions = {
 
 export const defaultOptions: ITabulatorOptions = {
   tabulatorOptions: {},
-  actionsColumnWidth: 60,
+  actionsColumnWidth: 56,
+  columnMinWidth: 384,
   downloadHiddenColumns: false,
   downloadButtons: ["csv"],
   downloadOptions: defaultDownloadOptions,
@@ -65,108 +73,245 @@ export const defaultOptions: ITabulatorOptions = {
           .filter((col: any) => col.isVisible()).length -
           1) *
         186.72;
-      if (minWidth > 841.89) {
+      if(minWidth > 841.89) {
         options.jsPDF = { format: [595.28, minWidth] };
       }
     },
   },
 };
 
+const rtlLanguages = ["ar", "fa", "he"];
+
+// survey-core records direction only for locales registered with rtl: true.
+// Fall back to the language code so ar/fa/he still enable RTL when that pack is not loaded,
+// and so regional codes such as "ar-SA" follow their base language.
+const isRtlLocale = (locale: string): boolean => {
+  if(!locale) return false;
+  const normalized = locale.toLowerCase();
+  const language = normalized.split("-")[0];
+  const directions = surveyLocalization.localeDirections;
+  if(directions[normalized] === "rtl" || directions[language] === "rtl") return true;
+  return rtlLanguages.indexOf(language) !== -1;
+};
+
 const escapeCellFormula = (field: string) => {
   const formulaPrefix = ["=", "+", "-", "@", String.fromCharCode(0x09), String.fromCharCode(0x0d)];
-  if (formulaPrefix.some(prefix => field.startsWith(prefix))) {
+  if(formulaPrefix.some(prefix => field.startsWith(prefix))) {
     return "'" + field;
   } else {
     return field;
   }
 };
 
+const decodeHtmlEntities = (text: string): string => {
+  if(typeof text !== "string") return text;
+  const entityMap: { [key: string]: string } = {
+    // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+    "&#10004;": "+",
+    // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+    "&check;": "✓",
+    // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+    "&checkmark;": "✓",
+    // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+    "&#x2713;": "✓",
+    // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+    "&#9745;": "☑",
+    // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+    "&#x2611;": "☑",
+    "&amp;": "&",
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": '"',
+    "&#39;": "'",
+    "&apos;": "'"
+  };
+
+  let decoded = text;
+  for(const entity in entityMap) {
+    decoded = decoded.replace(new RegExp(entity, "g"), entityMap[entity]);
+  }
+  return decoded;
+};
+
+type TabulatorParameters = ConstructorParameters<typeof TabulatorFull>;
+type TabulatorConstuctor = { new (...args: TabulatorParameters): TabulatorFull };
 export class Tabulator extends Table {
+  private _appliedTheme: DashboardTheme;
+  private _theme = new DashboardTheme();
+
+  private static tabulatorTablesConstructor: TabulatorConstuctor;
+  public static initTabulatorConstructor(tabulatorTablesConstructor: TabulatorConstuctor): void {
+    this.tabulatorTablesConstructor = tabulatorTablesConstructor;
+  }
   public static set haveCommercialLicense(val: boolean) {
     Table.haveCommercialLicense = val;
   }
 
+  public onAfterRender: Event<(sender: Table, options: any) => any, Table, any> = new Event<(sender: Table, options: any) => any, Table, any>();
+
+  protected afterRender(contentContainer: HTMLElement) {
+    this.onAfterRender.fire(this, { htmlElement: contentContainer });
+  }
+
   constructor(
     survey: SurveyModel,
-    data: Array<Object>,
+    data: Array<Object> | GetDataFn,
     options?: ITabulatorOptions,
     _columnsData: Array<IColumnData> = []
   ) {
     super(survey, data, options, _columnsData);
-    if(!!window && window["XLSX"] !== undefined && defaultOptions.downloadButtons.indexOf("xlsx") === -1) {
+    if(((options && options.xlsx) || (!!window && window["XLSX"] !== undefined)) && defaultOptions.downloadButtons.indexOf("xlsx") === -1) {
       defaultOptions.downloadButtons.unshift("xlsx");
     }
-    if(!!window && window["jsPDF"] !== undefined && defaultOptions.downloadButtons.indexOf("pdf") === -1) {
+    if(((options && options.jspdf) || (!!window && window["jspdf"] !== undefined)) && defaultOptions.downloadButtons.indexOf("pdf") === -1) {
       defaultOptions.downloadButtons.unshift("pdf");
     }
-    this._options = Object.assign({}, defaultOptions, options);
+    this._options = Object.assign({}, defaultOptions, this._options);
   }
 
   private readonly COLUMN_MIN_WIDTH = 155;
-  public tabulatorTables: any = null;
+  public tabulatorTables: TabulatorFull = null;
   private tableContainer: HTMLElement = null;
+  private resizeObserver: ResizeObserver = null;
+  private resizeFrame: number = 0;
   private currentDownloadType: string = "";
+
+  protected supportSoftRefresh() {
+    return true;
+  }
+
+  private isRtlLanguage(): boolean {
+    return isRtlLocale(this._survey.rootLang) || isRtlLocale(localization.currentLocale);
+  }
+
+  protected softRefresh() {
+    if(!this.isRendered) return;
+    this.layout(true);
+  }
 
   public render(targetNode: HTMLElement | string): void {
     super.render(targetNode);
-    if (typeof targetNode === "string") {
+    if(typeof targetNode === "string") {
       targetNode = document.getElementById(targetNode);
     }
     targetNode.className += " sa-table sa-tabulator";
+    if(this.isRtlLanguage()) {
+      targetNode.setAttribute("dir", "rtl");
+    } else {
+      targetNode.removeAttribute("dir");
+    }
+    if(!this._appliedTheme) {
+      this._appliedTheme = this.theme;
+    }
+    if(this._appliedTheme) {
+      this._appliedTheme.applyThemeToElement(targetNode);
+    }
 
     const columns = this.getColumns();
     const data = this.tableData;
 
+    var wrapper = DocumentHelper.createElement("div", "sa-tabulator__wrapper");
+    var container = DocumentHelper.createElement("div", "sa-tabulator__container");
     var header = DocumentHelper.createElement("div", "sa-tabulator__header");
-    var paginationElement = DocumentHelper.createElement(
-      "div",
-      "sa-tabulator__pagination-container"
-    );
-    this.tableContainer = DocumentHelper.createElement("div");
+    var footer = DocumentHelper.createElement("div", "sa-tabulator__footer");
+    var paginationElement = DocumentHelper.createElement("div", "sa-tabulator__pagination-container");
+    this.tableContainer = DocumentHelper.createElement("div", "sa-tabulator__table-container");
 
-    targetNode.appendChild(header);
-    targetNode.appendChild(this.tableContainer);
+    container.appendChild(header);
+    container.appendChild(this.tableContainer);
+    container.appendChild(footer);
+    wrapper.appendChild(container);
+    targetNode.appendChild(wrapper);
 
-    var config = {};
+    var config: any = {};
     Object.assign(
       config,
       {
         data,
         layout: "fitColumns",
-        pagination: "local",
+        pagination: this.options.paginationEnabled !== false,
+        paginationMode: "local",
         paginationSize: this.currentPageSize,
         movableColumns: true,
-        maxHeight: "100%",
+        maxHeight: "50vw",
+        autoResize: false,
         columns,
         rowFormatter: this.rowFormatter,
         paginationElement: paginationElement,
-        columnMoved: this.columnMovedCallback,
-        columnResized: this.columnResizedCallback,
         tooltipsHeader: true,
-        tooltips: (cell: any) => cell.getValue(),
         downloadRowRange: "all",
-        columnMinWidth: 248,
+        columnMinWidth: (this.options as ITabulatorOptions).columnMinWidth,
         paginationButtonCount: 3,
         nestedFieldSeparator: false,
+        dependencies: {
+          jspdf: this._options.jspdf,
+          XLSX: this._options.xlsx
+        },
+        textDirection: this.isRtlLanguage() ? "rtl" : "auto",
+        columnDefaults: {
+          tooltip: (_: MouseEvent, cell: any) => {
+            const span = document.createElement("span");
+            span.innerText = cell.getValue();
+            return span.innerHTML;
+          }
+        },
       },
       this._options.tabulatorOptions
     );
+    if(data === undefined && typeof this.data === "function") {
+      delete config.data;
+      config.pagination = true;
+      config.paginationMode = "remote";
+      config.paginationSize = this.currentPageSize,
+      config.ajaxFiltering = true; // Tabulator v4.8
+      config.filterMode = "remote"; // Tabulator v6.2
+      config.ajaxSorting = true; // Tabulator v4.8
+      config.sortMode = "remote"; // Tabulator v6.2
+      config.ajaxURL = "function",
+      config.ajaxRequestFunc = (url, config, params) => {
+        return new Promise<{ data: Array<Object>, last_page: number }>((resolve, reject) => {
+          const dataLoadingCallback = (loadedData: { data: Array<Object>, totalCount: number, error?: any }) => {
+            if(!loadedData.error && Array.isArray(loadedData.data)) {
+              resolve({ data: loadedData.data.map(item => this.processLoadedDataItem(item)), last_page: Math.ceil(loadedData.totalCount / params.size) });
+            } else {
+              reject();
+            }
+          };
+          const dataLoadingPromise = (this.data as GetDataFn)({
+            offset: (params.page - 1) * params.size,
+            limit: params.size,
+            filter: this.tabulatorTables?.getFilters(false),
+            sort: this.tabulatorTables?.getSorters().map(s => ({ field: s.field, direction: s.dir })),
+            callback: dataLoadingCallback
+          });
+          if(dataLoadingPromise) {
+            dataLoadingPromise.then(dataLoadingCallback);
+          }
+        });
+      };
+    }
 
-    this.tabulatorTables = new TabulatorTables(this.tableContainer, config);
+    this.tabulatorTables = new Tabulator.tabulatorTablesConstructor(this.tableContainer, config);
+    this.observeContainerResize();
+    this.tabulatorTables.on("columnResized", this.columnResizedCallback);
+    this.tabulatorTables.on("columnMoved", this.columnMovedCallback);
+    this.tabulatorTables.on("tableBuilt", () => {
+      this.renderResult = targetNode;
+      this.afterRender(targetNode);
+    });
 
-    const extensionsContainer = DocumentHelper.createElement(
-      "div",
-      "sa-table__header-extensions"
-    );
-    header.appendChild(this.createDownloadsBar());
-    header.appendChild(extensionsContainer);
-    header.appendChild(paginationElement);
+    const extensionsContainer = DocumentHelper.createElement("div", "sa-table__header-extensions");
     this.extensions.render(extensionsContainer, "header");
+    header.appendChild(extensionsContainer);
+    header.appendChild(this.createDownloadsBar());
+    this.extensions.render(footer, "footer");
+    footer.appendChild(paginationElement);
     this.renderResult = targetNode;
   }
 
   private createDownloadsBar(): HTMLElement {
-    var createDownloadButton = (type: string, caption: string): HTMLElement => {
+    /*
+    var createDownloadButton = (type: DownloadType, caption: string): HTMLElement => {
       const btn = DocumentHelper.createElement(
         "button",
         "sa-table__btn sa-table__btn--small sa-table__btn--gray",
@@ -185,7 +330,7 @@ export class Tabulator extends Table {
       "sa-tabulator__downloads-bar"
     );
 
-    this._options.downloadButtons.forEach((type: string) => {
+    this._options.downloadButtons.forEach((type: DownloadType) => {
       container.appendChild(
         createDownloadButton(
           type,
@@ -194,16 +339,61 @@ export class Tabulator extends Table {
       );
     });
     return container;
+    */
+
+    const values = this._options.downloadButtons.map(val => { return { value: val, text: localization.getString(`${val}DownloadCaption`), title: localization.getString(`${val}DownloadHint`) }; });
+    const exportAsAction = createActionDropdown({
+      options: values,
+      isSelected: (option: any) => false,
+      handler: (e: any) => {
+        if(!!e) {
+          this.download(e);
+        }
+        return true;
+      },
+      title: localization.getString("exportAs"),
+      showArrow: false
+    });
+    exportAsAction.className += " sa-tabulator__downloads-bar sa-button-brand-secondary";
+    return exportAsAction;
+  }
+
+  // Tabulator's own autoResize redraws synchronously inside its ResizeObserver callback,
+  // which makes browsers report "ResizeObserver loop completed with undelivered notifications".
+  private observeContainerResize(): void {
+    this.stopObservingContainerResize();
+    if(typeof ResizeObserver === "undefined") return;
+    const container = this.tableContainer;
+    let lastWidth = container.clientWidth;
+    this.resizeObserver = new ResizeObserver(() => {
+      cancelAnimationFrame(this.resizeFrame);
+      this.resizeFrame = requestAnimationFrame(() => {
+        const width = container.clientWidth;
+        if(!width || width === lastWidth) return;
+        lastWidth = width;
+        this.tabulatorTables?.redraw();
+      });
+    });
+    this.resizeObserver.observe(container);
+  }
+
+  private stopObservingContainerResize(): void {
+    if(!this.resizeObserver) return;
+    this.resizeObserver.disconnect();
+    this.resizeObserver = null;
+    cancelAnimationFrame(this.resizeFrame);
   }
 
   public destroy = () => {
+    this.stopObservingContainerResize();
     this.tabulatorTables.destroy();
     super.destroy();
   };
 
   private columnMovedCallback = (column: any, columns: any[]) => {
     var from = this._columns.indexOf(this.getColumnByName(column.getField()));
-    var to = columns.indexOf(column) - 1;
+    const rowExtensions = TableExtensions.getExtensions("row").filter(e => e.visibleIndex >= 0);
+    var to = columns.indexOf(column) - rowExtensions.length;
     this.moveColumn(from, to);
     this.disableColumnReorder();
   };
@@ -213,8 +403,8 @@ export class Tabulator extends Table {
     this.layout();
   };
 
-  private rowFormatter = (row: any): void => {
-    var tableRow = new TabulatorRow(
+  private rowFormatter = (row: RowComponent): void => {
+    const tableRow = new TabulatorRow(
       this,
       row.getCells()[0].getElement(),
       row.getElement(),
@@ -225,27 +415,239 @@ export class Tabulator extends Table {
       this.layout();
     });
     tableRow.render();
-
     this._rows.push(tableRow);
   };
-  private accessorDownload = (cellData: any, rowData: any, reason: string, _: any, columnComponent: any, rowComponent: any) => {
-    const columnDefinition = columnComponent.getDefinition();
-    const questionName = columnDefinition.field;
-    const column = this.columns.filter(col => col.name === questionName)[0];
-    if (!!column && rowComponent) {
-      const dataRow = this.data[rowComponent.getPosition()];
-      const dataCell = dataRow[questionName];
-      if (column.dataType === ColumnDataType.Image) {
-        return questionName;
+
+  private getNestedCellDisplayValue(question: Question, field: string, value: any): any {
+    if(value === undefined || value === null) return value;
+    let choices: any[];
+    const questionType = question.getType();
+    if(questionType === "paneldynamic") {
+      const panelQuestion = question as any;
+      const templateQuestion = panelQuestion.template.questions.find((q: any) => q.name === field);
+      if(templateQuestion) {
+        choices = templateQuestion.choices;
       }
-      if (column.dataType === ColumnDataType.FileLink && Array.isArray(dataCell)) {
-        return (dataCell || []).map(f => f.name).join(", ");
+    } else if(questionType === "matrixdynamic" || questionType === "matrixdropdown") {
+      const matrixQuestion = question as any;
+      const column = matrixQuestion.columns.find((col: any) => col.name === field);
+      if(column) {
+        choices = column.choices;
       }
     }
-    if (this.currentDownloadType === "csv" || this.currentDownloadType === "xlsx") {
+    if(choices && choices.length > 0) {
+      if(Array.isArray(value)) {
+        return value.map((v: any) => {
+          const item = ItemValue.getItemByValue(choices, v);
+          return item ? item.locText.textOrHtml : v;
+        });
+      }
+      const item = ItemValue.getItemByValue(choices, value);
+      if(item) {
+        return item.locText.textOrHtml;
+      }
+    }
+    return value;
+  }
+
+  private createNestedTable(nestedTableColumns: any[], cellData: any, question?: Question): HTMLElement {
+    const container = document.createElement("div");
+    container.className = "sa-nested-table-container";
+    const table = document.createElement("table");
+    table.className = "sa-nested-table";
+
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    nestedTableColumns.forEach((col: any) => {
+      const th = document.createElement("th");
+      th.textContent = col.title;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    cellData.forEach((row: any) => {
+      const tr = document.createElement("tr");
+      nestedTableColumns.forEach((col: any) => {
+        const td = document.createElement("td");
+        const rawValue = row[col.field];
+        const value = question ? this.getNestedCellDisplayValue(question, col.field, rawValue) : rawValue;
+        td.textContent = value !== undefined && value !== null ? (typeof value === "object" ? JSON.stringify(value) : String(value)) : "";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    container.appendChild(table);
+    return container;
+  }
+
+  private createNestedTableFormatter(column: IColumn) {
+    return (cell: any, formatterParams: any, onRendered: any) => {
+      const cellData = cell.getValue();
+
+      if(!Array.isArray(cellData) || cellData.length === 0) {
+        return "<span>No data</span>";
+      }
+
+      const question = this._survey.getQuestionByName(column.name);
+      if(!question) {
+        return "<span>Error: Question not found</span>";
+      }
+
+      let nestedTableColumns: any[] = [];
+      if(question.getType() === "matrixdynamic") {
+        const matrixQuestion = question as any;
+        nestedTableColumns = matrixQuestion.columns.map((col: any) => ({
+          title: this.processTitle(col.title || col.name),
+          field: col.name,
+        }));
+      } else if(question.getType() === "paneldynamic") {
+        const panelQuestion = question as any;
+        const templateQuestions = panelQuestion.template.questions;
+        nestedTableColumns = templateQuestions.map((q: any) => ({
+          title: this.processTitle(q.title || q.name),
+          field: q.name,
+        }));
+      }
+
+      if(this.options.useNestedTables === true) {
+        return this.createNestedTable(nestedTableColumns, cellData, question);
+      }
+
+      const tableEl = document.createElement("div");
+      tableEl.classList.add("sa-nested-table");
+
+      // Defer nested Tabulator initialization to onRendered so that it
+      // runs once per cell and can be properly cleaned up.
+      onRendered(() => {
+        const el: any = tableEl as any;
+
+        // Avoid creating multiple nested tables for the same cell element.
+        if(el._nestedTabulator) {
+          return;
+        }
+
+        const displayData = cellData.map((row: any) => {
+          const transformedRow: any = {};
+          nestedTableColumns.forEach((col: any) => {
+            transformedRow[col.field] = this.getNestedCellDisplayValue(question, col.field, row[col.field]);
+          });
+          return transformedRow;
+        });
+
+        const nestedTable = new (Tabulator as any).tabulatorTablesConstructor(tableEl, {
+          // layout: "fitDataFill",
+          data: displayData,
+          columns: nestedTableColumns,
+          pagination: false,
+          textDirection: this.isRtlLanguage() ? "rtl" : "auto",
+        });
+
+        // Cache instance on the element for reuse / potential future teardown.
+        el._nestedTabulator = nestedTable;
+
+        nestedTable.on("tableBuilt", () => {
+          // cell.getRow().normalizeHeight();
+          this.layout(false);
+        });
+
+        // Ensure nested table is destroyed when the parent row is deleted.
+        try {
+          const row = cell.getRow && cell.getRow();
+          const parentTable = row && row.getTable && row.getTable();
+          if(parentTable && parentTable.on) {
+            parentTable.on("rowDeleted", (deletedRow: any) => {
+              if(deletedRow === row && el._nestedTabulator) {
+                // Destroy nested Tabulator and clear cache.
+                el._nestedTabulator.destroy();
+                el._nestedTabulator = null;
+              }
+            });
+          }
+        } catch(e) {
+          // Fail-safe: if lifecycle hooks are unavailable, we still avoid
+          // multiple instances per cell via the cached _nestedTabulator.
+        }
+      });
+
+      return tableEl;
+    };
+  }
+
+  private formatNestedDataForExport(nestedData: any[], column: IColumn): string {
+    if(!Array.isArray(nestedData) || nestedData.length === 0) {
+      return "";
+    }
+
+    const question = this._survey.getQuestionByName(column.name);
+    if(!question) {
+      return "";
+    }
+
+    let nestedColumns: any[] = [];
+    if(question.getType() === "matrixdynamic") {
+      const matrixQuestion = question as any;
+      nestedColumns = matrixQuestion.columns.map((col: any) => ({
+        title: this.processTitle(col.title || col.name),
+        field: col.name,
+      }));
+    } else if(question.getType() === "paneldynamic") {
+      const panelQuestion = question as any;
+      const templateQuestions = panelQuestion.template.questions;
+      nestedColumns = templateQuestions.map((q: any) => ({
+        title: this.processTitle(q.title || q.name),
+        field: q.name,
+      }));
+    }
+
+    const header = nestedColumns.map(col => col.title).join(" | ");
+    const rows = nestedData.map(rowData => {
+      return nestedColumns.map(col => {
+        const rawValue = rowData[col.field];
+        const value = this.getNestedCellDisplayValue(question, col.field, rawValue);
+        return value !== undefined && value !== null ? (typeof value === "object" ? JSON.stringify(value) : String(value)) : "";
+      }).join(" | ");
+    });
+
+    return `[${header}]\n${rows.join("\n")}`;
+  }
+
+  private accessorDownload = (cellData: any, rowData: any, reason: string, _: any, columnComponent: any, rowComponent: any) => {
+    if(Array.isArray(this.data)) {
+      const columnDefinition = columnComponent.getDefinition();
+      const questionName = columnDefinition.field;
+      const column = this.getColumnByName(questionName);
+      if(!!column && rowComponent) {
+        const dataRow = rowComponent.getData().surveyOriginalData;
+        const dataCell = dataRow[questionName];
+        if(column.dataType === ColumnDataType.Image) {
+          return questionName;
+        }
+        if(column.dataType === ColumnDataType.FileLink && Array.isArray(dataCell)) {
+          return (dataCell || []).map(f => f.name).join(", ");
+        }
+        if(column.dataType === ColumnDataType.Html) {
+          return decodeHtmlEntities(cellData);
+        }
+        if(column.dataType === ColumnDataType.NestedTable && Array.isArray(cellData)) {
+          return this.formatNestedDataForExport(cellData, column);
+        }
+      }
+    }
+    if(this.currentDownloadType === "csv" || this.currentDownloadType === "xlsx") {
       return escapeCellFormula(cellData);
     }
     return cellData;
+  };
+
+  private processTitle(title: string): string {
+    if(!this.options || this.options.stripHtmlFromTitles !== false) {
+      return stripHtml(title);
+    }
+    return title;
   }
 
   private getTitleFormatter(
@@ -254,54 +656,58 @@ export class Tabulator extends Table {
     onRendered: any,
     columnName: any
   ): HTMLElement {
-    var container = DocumentHelper.createElement("div");
-    var title = DocumentHelper.createElement("span", "", {
+    var container = DocumentHelper.createElement("div", "sa-tabulator-column-header");
+    var title = DocumentHelper.createElement("span", "sa-tabulator-column-title-text", {
       innerText: cell.getValue(),
     });
-    var actions = this.getHeaderActions(columnName);
-    container.appendChild(actions);
+    const actionContainer = this.getHeaderActions(columnName);
+    const containerFilter = DocumentHelper.createElement("div", "sa-table__filter-container");
+    this.extensions.render(containerFilter, "columnfilter", { columnName: columnName });
+
+    container.appendChild(actionContainer);
     container.appendChild(title);
-    container.onmousedown = (e: any) => {
-      if (!this.isColumnReorderEnabled) {
-        e.stopPropagation();
-      } else {
-        this.disableColumnReorder();
+    container.appendChild(containerFilter);
+    ["mousemove", "mousedown"].forEach(eventName => actionContainer.addEventListener(eventName, (event) => {
+      if(!this.isColumnReorderEnabled) {
+        event.stopPropagation();
       }
-    };
+    }));
     return container;
   }
 
   private getHeaderActions(columnName: string): HTMLElement {
-    const container = DocumentHelper.createElement(
-      "div",
-      "sa-table__action-container"
-    );
+    const container = DocumentHelper.createElement("div", "sa-table__action-container");
     this.extensions.render(container, "column", { columnName: columnName });
     return container;
   }
 
   public getColumns(): Array<any> {
     const columns: any = this.columns.map((column, index) => {
-      let question = this._survey.getQuestionByName(column.name);
       let formatter = "plaintext";
-      if (column.dataType == ColumnDataType.FileLink) {
+      if(column.dataType == ColumnDataType.FileLink || column.dataType == ColumnDataType.Html) {
         formatter = "html";
       }
-      if (column.dataType == ColumnDataType.Image) {
+      if(column.dataType == ColumnDataType.Image) {
         formatter = "image";
       }
-      return {
+
+      const columnDef: any = {
         field: column.name,
-        title:
-          (question &&
-            (this._options.useNamesAsTitles ? question.name : question.title)) ||
-          column.displayName,
+        title: column.displayName || column.name,
         width: column.width,
         widthShrink: !column.width ? 1 : 0,
         visible: this.isColumnVisible(column),
         headerSort: false,
-        download: this._options.downloadHiddenColumns ? true : undefined,
+        minWidth: this._options.columnMinWidth,
+        download: this.options.downloadHiddenColumns ? true : undefined,
         formatter,
+        // Tabulator injects tooltip content via innerHTML, so the title must be escaped
+        headerTooltip: (_: MouseEvent, columnComponent: any) => {
+          const span = document.createElement("span");
+          span.textContent = columnComponent.getDefinition().title || "";
+          return span.innerHTML;
+        },
+        headerWordWrap: true,
         accessorDownload: this.accessorDownload,
         titleFormatter: (cell: any, formatterParams: any, onRendered: any) => {
           return this.getTitleFormatter(
@@ -312,55 +718,102 @@ export class Tabulator extends Table {
           );
         },
       };
+
+      if(column.dataType == ColumnDataType.NestedTable) {
+        columnDef.formatter = this.createNestedTableFormatter(column);
+        columnDef.tooltip = (_: MouseEvent, cell: any) => {
+          const cellData = cell.getValue();
+          if(Array.isArray(cellData) && cellData.length > 0) {
+            return this.formatNestedDataForExport(cellData, column);
+          }
+          return "";
+        };
+      }
+
+      return columnDef;
     });
-    // add special column (collapse/expand)
-    columns.unshift({
-      field: "",
-      title: "",
-      download: false,
-      resizable: false,
-      minWidth: this._options.actionsColumnWidth,
-      width: this._options.actionsColumnWidth,
+    const rowExtensions = TableExtensions.getExtensions("row").filter(e => e.visibleIndex >= 0);
+    // const detailsExtension = TableExtensions.getExtensions("details").filter(e => e.visibleIndex >= 0);
+    // const hasRowColumns = this.columns.some(c => c.location === QuestionLocation.Row);
+    // if(rowExtensions.length > 1 || detailsExtension.length > 0
+    //       || rowExtensions.length == 1 && (rowExtensions[0].name == "details" && hasRowColumns || rowExtensions[0].name != "details")) {
+    rowExtensions.forEach(ext => {
+      columns.unshift({
+        download: false,
+        resizable: false,
+        headerSort: false,
+        minWidth: this._options.actionsColumnWidth,
+        width: this._options.actionsColumnWidth,
+        tooltip: (_: MouseEvent, cell: any) => {
+          return undefined;
+        }
+      });
     });
+    // }
 
     return columns;
   }
 
   public setColumnVisibility(columnName: string, isVisible: boolean): void {
     super.setColumnVisibility(columnName, isVisible);
-    if (this.isRendered) {
-      if (isVisible) {
-        this.tabulatorTables.showColumn(columnName);
-      } else {
-        this.tabulatorTables.hideColumn(columnName);
-      }
+    this.applyColumnVisibility(columnName);
+    if(this.isRendered) {
       this.layout();
+    }
+  }
+
+  protected setAllColumnsVisibility(isVisible: boolean): void {
+    this.lockStateChanged();
+    try {
+      this._columns.forEach((column) => {
+        if(column.isVisible !== isVisible) {
+          super.setColumnVisibility(column.name, isVisible);
+          this.applyColumnVisibility(column.name);
+        }
+      });
+    } finally {
+      this.unlockStateChanged();
+    }
+    this.stateChanged();
+    if(this.isRendered) {
+      this.layout();
+    }
+  }
+
+  private applyColumnVisibility(columnName: string): void {
+    if(!this.isRendered) return;
+    const column = this.getColumnByName(columnName);
+    if(this.isColumnVisible(column)) {
+      this.tabulatorTables.showColumn(columnName);
+    } else {
+      this.tabulatorTables.hideColumn(columnName);
     }
   }
 
   public setColumnLocation(columnName: string, location: QuestionLocation): void {
     super.setColumnLocation(columnName, location);
-    if (this.isRendered) {
-      if (location == QuestionLocation.Row)
+    if(this.isRendered) {
+      if(location == QuestionLocation.Row)
         this.tabulatorTables.hideColumn(columnName);
       else this.tabulatorTables.showColumn(columnName);
       this.layout();
     }
   }
 
-  public setColumnWidth(columnName: string, width: number | string): void {
+  public setColumnWidth(columnName: string, width: number): void {
     super.setColumnWidth(columnName, width);
-    if (this.isRendered) {
-      var definition = this.tabulatorTables
-        .getColumn(columnName)
-        .getDefinition();
-      definition.width = width;
-      definition.widthShrink = 0;
-      this.layout();
+    if(this.isRendered) {
+      const column = this.tabulatorTables.getColumn(columnName);
+      if(!!column) {
+        const definition = column.getDefinition();
+        definition.width = width;
+        definition.widthShrink = !!width ? 0 : 1;
+        column.setWidth(width);
+      }
     }
   }
 
-  public sortByColumn(columnName: string, direction: string): void {
+  public sortByColumn(columnName: string, direction: SortDirection): void {
     this.tabulatorTables.setSort(columnName, direction);
   }
 
@@ -370,8 +823,10 @@ export class Tabulator extends Table {
 
   public applyFilter(value: string): void {
     var customFilter = (data: any, filterParams: any) => {
-      for (var key in data) {
-        if (
+      for(var key in data) {
+        if(
+          data[key] &&
+          typeof data[key] === "string" &&
           data[key].toLowerCase().includes(filterParams.value.toLowerCase())
         ) {
           return true;
@@ -385,22 +840,23 @@ export class Tabulator extends Table {
   }
 
   public getPageNumber(): number {
-    if (!this.isRendered) {
+    if(!this.isRendered) {
       return 1;
     }
-    return this.tabulatorTables.getPage();
+    const pageNumber = this.tabulatorTables.getPage();
+    return pageNumber ? pageNumber : -1;
   }
 
   public setPageNumber(value: number): void {
     super.setPageNumber(value);
-    if (this.isRendered) {
+    if(this.isRendered) {
       this.tabulatorTables.setPage(value);
     }
   }
 
   public setPageSize(value: number): void {
     super.setPageSize(value);
-    if (this.isRendered) {
+    if(this.isRendered) {
       this.tabulatorTables.setPageSize(value);
     }
   }
@@ -411,11 +867,11 @@ export class Tabulator extends Table {
       this._options.downloadOptions[type] || defaultOptions.downloadOptions[type]
     );
     const onDownloadCallback = this._options.onDownloadCallbacks[type];
-    if (!!onDownloadCallback) onDownloadCallback(this, options);
+    if(!!onDownloadCallback) onDownloadCallback(this, options);
     return options;
   }
 
-  public download(type: string): void {
+  public download(type: DownloadType): void {
     this.currentDownloadType = type;
     this.tabulatorTables.download(
       type,
@@ -427,6 +883,35 @@ export class Tabulator extends Table {
   public layout(hard: boolean = false): void {
     this.tabulatorTables.redraw(hard);
   }
+  protected processLoadedDataItem(item: any) {
+    const dataItem = super.processLoadedDataItem(item);
+    dataItem["surveyOriginalData"] = item;
+    return dataItem;
+  }
+
+  get theme() : DashboardTheme {
+    return this._theme;
+  }
+  set theme(theme: DashboardTheme) {
+    this._theme = theme;
+    this._appliedTheme = undefined;
+  }
+
+  /**
+   * Applies a theme to the Dashboard.
+   * @param theme An [`ITheme`](https://surveyjs.io/form-library/documentation/api-reference/itheme) object with theme settings.
+   * @param baseTheme An optional [`ITheme`](https://surveyjs.io/form-library/documentation/api-reference/itheme) object used as the base theme. When specified, it is deep-merged with `theme`, and the merged result is applied.
+   * @since 3.0.0
+   */
+  public applyTheme(theme: ITheme, baseTheme?: ITheme): void {
+    if(!theme && !baseTheme) return;
+    const themeToApply = baseTheme ? mergeObjects({}, baseTheme, theme) : theme;
+    this.theme.setTheme(themeToApply);
+    this._appliedTheme = this.theme;
+    if(this.renderResult) {
+      this._appliedTheme.applyThemeToElement(this.renderResult);
+    }
+  }
 }
 
 export class TabulatorRow extends TableRow {
@@ -434,7 +919,7 @@ export class TabulatorRow extends TableRow {
     protected table: Table,
     protected extensionsContainer: HTMLElement,
     protected detailsContainer: HTMLElement,
-    protected innerRow: any
+    protected innerRow: any,
   ) {
     super(table, extensionsContainer, detailsContainer);
   }
@@ -448,7 +933,23 @@ export class TabulatorRow extends TableRow {
   }
 
   public getDataPosition(): number {
-    return this.innerRow.getPosition();
+    const data = this.table.getData();
+    if(Array.isArray(data)) {
+      return data.indexOf(this.innerRow.getData().surveyOriginalData);
+    }
+    return null;
+  }
+
+  public render() {
+    let rowExtensions = TableExtensions.getExtensions("row").filter(e => e.visibleIndex >= 0);
+    rowExtensions = this.extensions.sortExtensions(rowExtensions);
+    rowExtensions.forEach((rowExt, index) => {
+      const cellAction = this.innerRow.getCells()[index].getElement();
+      cellAction.innerHTML = "";
+      this.extensions.renderExtension(rowExt, cellAction, { row: this });
+      cellAction.classList.add("sa-tabulator-cell__action");
+      cellAction.classList.add("sa-tabulator-cell__action-" + rowExt.name.toLowerCase());
+    });
   }
 
   public remove(): void {

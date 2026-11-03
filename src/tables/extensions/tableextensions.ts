@@ -1,6 +1,6 @@
 import { Table } from "../table";
 
-interface ITableExtension {
+export interface ITableExtension {
   location: string;
   name: string;
   visibleIndex: number;
@@ -15,29 +15,33 @@ export class TableExtensions {
 
   public render(targetNode: HTMLElement, location: string, options?: any) {
     var extensions = TableExtensions.extensions[location];
-    if (!!extensions) {
+    if(!!extensions) {
       extensions = this.sortExtensions(extensions);
       extensions.forEach((extension) => {
-        if (!!extension.render) {
-          var action = extension.render(this.table, options);
-          if (!!action) {
-            targetNode.appendChild(action);
-            this.renderedExtensions.push(extension);
-          }
-        }
+        this.renderExtension(extension, targetNode, options);
       });
+    }
+  }
+
+  public renderExtension(extension: ITableExtension, targetNode: HTMLElement, options?: any) {
+    if(!!extension.render && this.table.allowExtension(extension)) {
+      var action = extension.render(this.table, options);
+      if(!!action) {
+        targetNode.appendChild(action);
+        this.renderedExtensions.push(extension);
+      }
     }
   }
 
   public destroy() {
     this.renderedExtensions.forEach((extension) => {
-      if (!!extension.destroy) extension.destroy();
+      if(!!extension.destroy) extension.destroy();
     });
     this.renderedExtensions = [];
   }
 
   public static registerExtension(extension: ITableExtension) {
-    if (!this.extensions[extension.location])
+    if(!this.extensions[extension.location])
       this.extensions[extension.location] = [];
     this.extensions[extension.location].push(extension);
   }
@@ -72,7 +76,7 @@ export class TableExtensions {
     location: string,
     actionName: string
   ): ITableExtension {
-    if (!this.extensions[location]) return null;
+    if(!this.extensions[location]) return null;
     var extension = this.extensions[location].filter(function (
       extension: ITableExtension
     ) {
@@ -81,8 +85,13 @@ export class TableExtensions {
     return extension || null;
   }
 
-  private sortExtensions(extensions: Array<ITableExtension>) {
-    if (!Array.isArray(extensions)) return;
+  public static getExtensions(location: string): Array<ITableExtension> {
+    if(!this.extensions[location]) return [];
+    return this.extensions[location].slice(0);
+  }
+
+  public sortExtensions(extensions: Array<ITableExtension>) {
+    if(!Array.isArray(extensions)) return;
     return []
       .concat(extensions.filter((extension) => extension.visibleIndex >= 0))
       .sort((firstExtension, secondExtension) => {

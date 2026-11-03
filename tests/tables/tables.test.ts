@@ -1,6 +1,11 @@
 import { SurveyModel, QuestionTextModel, ComponentCollection, QuestionCustomModel, QuestionCompositeModel } from "survey-core";
 import { Table } from "../../src/tables/table";
 import { ColumnDataType, ITableState, QuestionLocation } from "../../src/tables/config";
+import { CheckboxColumnsBuilder, ColumnsBuilderFactory, CompositeColumnsBuilder } from "../../src/tables/columnbuilder";
+import { CheckboxColumn, CommentColumn, OtherColumn, SelectBaseColumn, SingleChoiceColumn } from "../../src/tables/columns";
+import { QuestionRadiogroupModel } from "survey-core";
+import { LineController } from "chart.js";
+
 const json = {
   questions: [
     {
@@ -18,11 +23,11 @@ const json = {
   ],
 };
 
-class TableTest extends Table {
-  applyColumnFilter() {}
-  applyFilter() {}
-  render() {}
-  sortByColumn() {}
+export class TableTest extends Table {
+  applyColumnFilter() { }
+  applyFilter() { }
+  render() { }
+  sortByColumn() { }
 }
 
 test("buildColumns method", () => {
@@ -109,6 +114,43 @@ test("getState, setState, onStateChanged", () => {
   tables.locale = "ru";
   expect(count).toBe(1);
   expect(tables.state.locale).toEqual("ru");
+
+  tables.setPageSize(10);
+  expect(tables.getPageSize()).toEqual(10);
+
+  tables.resetState();
+  expect(tables.state).toEqual(initialState);
+});
+
+test("hideAllColumns/showAllColumns", () => {
+  const tables = new TableTest(new SurveyModel(json), [], null, []);
+  let stateChangedCount = 0;
+  tables.onStateChanged.add(() => {
+    stateChangedCount++;
+  });
+
+  expect(tables.columns.map(column => column.isVisible)).toEqual([true, true]);
+  tables.hideAllColumns();
+  expect(tables.columns.map(column => column.isVisible)).toEqual([false, false]);
+  expect(stateChangedCount).toBe(1);
+
+  tables.showAllColumns();
+  expect(tables.columns.map(column => column.isVisible)).toEqual([true, true]);
+  expect(stateChangedCount).toBe(2);
+
+  tables.setColumnVisibility("car", false);
+  expect(stateChangedCount).toBe(3);
+  tables.showAllColumns();
+  expect(tables.columns.map(column => column.isVisible)).toEqual([true, true]);
+  expect(stateChangedCount).toBe(4);
+
+  tables.setColumnLocation("photo", QuestionLocation.Row);
+  tables.setColumnVisibility("car", false);
+  tables.showAllColumns();
+  expect(tables.getColumnByName("car").isVisible).toBe(true);
+  expect(tables.getColumnByName("photo").isVisible).toBe(true);
+  expect(tables.isColumnVisible(tables.getColumnByName("car"))).toBe(true);
+  expect(tables.isColumnVisible(tables.getColumnByName("photo"))).toBe(false);
 });
 
 test("partial state", () => {
@@ -274,6 +316,34 @@ test("check columns for question with comment", () => {
   expect(<any>table.columns[1].dataType).toEqual(ColumnDataType.Text);
 });
 
+test("do not create columns for html and image questions", () => {
+  const json = {
+    questions: [
+      {
+        type: "text",
+        name: "q1"
+      },
+      {
+        type: "html",
+        name: "q2"
+      },
+      {
+        type: "image",
+        name: "q3"
+      },
+      {
+        type: "text",
+        name: "q4"
+      },
+    ],
+  };
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [], {}, []);
+  expect((<any>table).columns).toHaveLength(2);
+  expect((<any>table).columns[0].name).toEqual("q1");
+  expect((<any>table).columns[1].name).toEqual("q4");
+});
+
 test("check columns for question with other and storeOthersAsComment: true", () => {
   const json = {
     questions: [
@@ -315,6 +385,29 @@ test("check columns for question with other and storeOthersAsComment: false", ()
   expect((<any>table).columns.length).toEqual(1);
 });
 
+test("check columns for question with other and comment", () => {
+  const json = {
+    questions: [
+      {
+        type: "radiogroup",
+        title: "Radio",
+        name: "radio",
+        choices: [{ value: "choiceValue", text: "choiceText" }],
+        otherText: "Other (Describe Radio)",
+        hasOther: true,
+        showCommentArea: true,
+        commentText: "Comment-Test"
+      },
+    ],
+  };
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [], {}, []);
+  expect((<any>table).columns[0].name).toEqual("radio");
+  expect(<any>table.columns[1].name).toEqual("radio-Comment");
+  expect(<any>table.columns[1].displayName).toEqual("Comment-Test");
+  expect(<any>table.columns[1].dataType).toEqual(ColumnDataType.Text);
+});
+
 test("check data for question with comment", () => {
   const json = {
     questions: [
@@ -345,13 +438,21 @@ test("check data for question with other and storeOthersAsComment: true", () => 
     ],
   };
   const survey = new SurveyModel(json);
+  const question = survey.getAllQuestions()[0] as QuestionRadiogroupModel;
+  expect(question.hasOther).toBeTruthy();
+  expect(question.getStoreOthersAsComment()).toBeTruthy();
+
   const data = [{ radio: "choiceValue", "radio-Comment": "otherValue" }];
   const table = new TableTest(survey, data, {}, []);
   expect((<any>table).tableData[0]["radio"]).toEqual("choiceText");
   expect((<any>table).tableData[0]["radio-Comment"]).toEqual("otherValue");
+  expect((<any>table).columns.length).toEqual(2);
+  expect((<any>table).columns[0] instanceof SingleChoiceColumn).toBeTruthy();
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("choiceText");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("otherValue");
 });
 
-test("check data for question with other and storeOthersAsComment: true", () => {
+test("check data for question with other and storeOthersAsComment: false", () => {
   const json = {
     questions: [
       {
@@ -364,10 +465,17 @@ test("check data for question with other and storeOthersAsComment: true", () => 
     ],
   };
   const survey = new SurveyModel(json);
+  const question = survey.getAllQuestions()[0] as QuestionRadiogroupModel;
+  expect(question.hasOther).toBeTruthy();
+  expect(question.getStoreOthersAsComment()).toBeFalsy();
+
   const data = [{ radio: "otherValue" }];
   const table = new TableTest(survey, data, {}, []);
   expect((<any>table).tableData[0]["radio"]).toEqual("otherValue");
   expect((<any>table).tableData[0]["radio-Comment"]).toBeUndefined();
+  expect((<any>table).columns.length).toEqual(1);
+  expect((<any>table).columns[0] instanceof SingleChoiceColumn).toBeTruthy();
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("otherValue");
 });
 
 test("check useNamesAsTitles option", () => {
@@ -386,7 +494,7 @@ test("check useNamesAsTitles option", () => {
   expect((<any>table).columns[0].displayName).toEqual("radio");
 });
 
-test("check question which is not ready", () => {
+test("check question which is not ready", async () => {
   const json = {
     questions: [
       {
@@ -404,10 +512,11 @@ test("check question which is not ready", () => {
   question["isReadyValue"] = true;
   data[0].text = "test_text";
   question.onReadyChanged.fire(question, { isReady: true });
+  await question.waitForQuestionIsReady();
   expect(table["tableData"][0]["text"]).toEqual("test_text");
 });
 
-test("check custom question with question which is not ready", () => {
+test("check custom question with question which is not ready", async () => {
   ComponentCollection
     .Instance
     .add({
@@ -434,10 +543,12 @@ test("check custom question with question which is not ready", () => {
   question.contentQuestion["isReadyValue"] = true;
   data[0]["customQuestion"] = "test_text";
   question.contentQuestion.onReadyChanged.fire(question.contentQuestion, { isReady: true });
+  await question.contentQuestion.waitForQuestionIsReady();
   expect(table["tableData"][0]["customQuestion"]).toEqual("test_text");
 });
 
-test("check composite question with questions which is not ready", () => {
+test("check composite question with questions which is not ready", async () => {
+  CompositeColumnsBuilder.ShowAsSeparateColumns = false;
   ComponentCollection
     .Instance
     .add({
@@ -470,12 +581,15 @@ test("check composite question with questions which is not ready", () => {
   expect(table["tableData"][0]["compositeQuestion"]).toEqual("{\"innerQuestion\":\"test_value1\",\"innerQuestion2\":\"test_value2\"}");
   question.contentPanel.elements[0]["isReadyValue"] = true;
   data[0]["compositeQuestion"]["innerQuestion"] = "test_text1";
-  question.contentPanel.elements[0].onReadyChanged.fire(question.contentPanel.elements[0], { isReady: true });
+  (question.contentPanel.elements[0] as any).onReadyChanged.fire(question.contentPanel.elements[0], { isReady: true });
+  await (question.contentPanel.elements[0] as any).waitForQuestionIsReady();
   expect(table["tableData"][0]["compositeQuestion"]).toEqual("{\"innerQuestion\":\"test_text1\",\"innerQuestion2\":\"test_value2\"}");
   question.contentPanel.elements[1]["isReadyValue"] = true;
   data[0]["compositeQuestion"]["innerQuestion2"] = "test_text2";
-  question.contentPanel.elements[1].onReadyChanged.fire(question.contentPanel.elements[1], { isReady: true });
+  (question.contentPanel.elements[1] as any).onReadyChanged.fire(question.contentPanel.elements[1], { isReady: true });
+  await (question.contentPanel.elements[1] as any).waitForQuestionIsReady();
   expect(table["tableData"][0]["compositeQuestion"]).toEqual("{\"innerQuestion\":\"test_text1\",\"innerQuestion2\":\"test_text2\"}");
+  CompositeColumnsBuilder.ShowAsSeparateColumns = false;
 });
 
 test("Generate columns for question matrix", () => {
@@ -660,7 +774,7 @@ test("Check table get/set state for columns", () => {
   );
   table.state = state;
 
-  expect(JSON.stringify(table.columns)).toBe("[{\"name\":\"q2\",\"displayName\":\"q2\",\"dataType\":0,\"isVisible\":false,\"isPublic\":true,\"location\":0},{\"name\":\"q1\",\"displayName\":\"q1_changed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":1},{\"name\":\"q2-Comment\",\"displayName\":\"Other (describe)\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":0},{\"name\":\"q3\",\"displayName\":\"not currently existed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":false,\"location\":0}]");
+  expect(JSON.stringify(table.columns)).toBe("[{\"name\":\"q2\",\"displayName\":\"q2\",\"dataType\":0,\"isVisible\":false,\"isPublic\":true,\"location\":0},{\"name\":\"q1\",\"displayName\":\"q1_changed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":1},{\"name\":\"q2-Comment\",\"displayName\":\"Please leave a comment\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":0},{\"name\":\"q3\",\"displayName\":\"not currently existed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":false,\"location\":0}]");
 });
 
 test("check pass columns data via constructor", () => {
@@ -704,7 +818,7 @@ test("check pass columns data via constructor", () => {
     "q2-Comment": "r32r2r23r23r",
   }], {}, state.elements);
 
-  expect(JSON.stringify(table.columns)).toBe("[{\"name\":\"q2\",\"displayName\":\"q2\",\"dataType\":0,\"isVisible\":false,\"isPublic\":true,\"location\":0},{\"name\":\"q1\",\"displayName\":\"q1_changed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":1},{\"name\":\"q2-Comment\",\"displayName\":\"Other (describe)\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":0},{\"name\":\"q3\",\"displayName\":\"not currently existed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":false,\"location\":0}]");
+  expect(JSON.stringify(table.columns)).toBe("[{\"name\":\"q2\",\"displayName\":\"q2\",\"dataType\":0,\"isVisible\":false,\"isPublic\":true,\"location\":0},{\"name\":\"q1\",\"displayName\":\"q1_changed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":1},{\"name\":\"q2-Comment\",\"displayName\":\"Please leave a comment\",\"dataType\":0,\"isVisible\":true,\"isPublic\":true,\"location\":0},{\"name\":\"q3\",\"displayName\":\"not currently existed\",\"dataType\":0,\"isVisible\":true,\"isPublic\":false,\"location\":0}]");
 });
 
 const matrixDropdownJson = {
@@ -848,3 +962,1065 @@ test("check matrix dropdown columns name with dots", () => {
   expect(expect(tableData["question.name.row 2.col 2"]).toEqual(""));
 });
 
+test("check matrix dropdown columns after default threshold are shown in detail row", () => {
+  const matrixDotsNameDropdownJson = {
+    "elements": [
+      {
+        "type": "matrixdropdown",
+        "name": "shortMatrix",
+        "columns": [
+          {
+            "name": "col 1",
+          },
+          {
+            "name": "col 2",
+          },
+        ],
+        "rows": ["row1", "row2"]
+      },
+      {
+        "type": "matrixdropdown",
+        "name": "longMatrix",
+        "columns": [
+          {
+            "name": "col 1",
+          },
+          {
+            "name": "col 2",
+          },
+        ],
+        "rows": ["row1", "row2", "row3", "row4", "row5", "row6"]
+      }
+    ]
+  };
+
+  const survey = new SurveyModel(matrixDotsNameDropdownJson);
+  let table = new TableTest(survey, [], {}, []);
+  let columns = table.columns;
+  expect(columns.length).toBe(16);
+  expect(columns[0].name).toBe("shortMatrix.row1.col 1");
+  expect(columns[0].location).toBe(QuestionLocation.Column);
+  expect(columns[1].name).toBe("shortMatrix.row1.col 2");
+  expect(columns[1].location).toBe(QuestionLocation.Column);
+  expect(columns[2].name).toBe("shortMatrix.row2.col 1");
+  expect(columns[2].location).toBe(QuestionLocation.Column);
+  expect(columns[3].name).toBe("shortMatrix.row2.col 2");
+  expect(columns[3].location).toBe(QuestionLocation.Column);
+  expect(columns[4].name).toBe("longMatrix.row1.col 1");
+  expect(columns[4].location).toBe(QuestionLocation.Column);
+  expect(columns[5].name).toBe("longMatrix.row1.col 2");
+  expect(columns[5].location).toBe(QuestionLocation.Column);
+  expect(columns[8].name).toBe("longMatrix.row3.col 1");
+  expect(columns[8].location).toBe(QuestionLocation.Column);
+  expect(columns[9].name).toBe("longMatrix.row3.col 2");
+  expect(columns[9].location).toBe(QuestionLocation.Row);
+});
+
+test("check matrixDropdownDetailRowThreshold option", () => {
+  const matrixDropdownJson = {
+    elements: [
+      {
+        type: "matrixdropdown",
+        name: "matrixQ",
+        columns: [
+          { name: "c1" },
+          { name: "c2" },
+        ],
+        rows: ["r1", "r2", "r3"]
+      }
+    ]
+  };
+
+  const survey = new SurveyModel(matrixDropdownJson);
+  const table = new TableTest(survey, [], { matrixDropdownDetailRowThreshold: 2 }, []);
+  const columns = table.columns;
+
+  expect(columns.length).toBe(6);
+  expect(columns[0].name).toBe("matrixQ.r1.c1");
+  expect(columns[0].location).toBe(QuestionLocation.Column);
+  expect(columns[1].name).toBe("matrixQ.r1.c2");
+  expect(columns[1].location).toBe(QuestionLocation.Column);
+  expect(columns[2].name).toBe("matrixQ.r2.c1");
+  expect(columns[2].location).toBe(QuestionLocation.Row);
+  expect(columns[5].name).toBe("matrixQ.r3.c2");
+  expect(columns[5].location).toBe(QuestionLocation.Row);
+});
+
+test("check matrixDropdownDetailRowThreshold equals 0", () => {
+  const matrixDropdownJson = {
+    elements: [
+      {
+        type: "matrixdropdown",
+        name: "matrixQ",
+        columns: [
+          { name: "c1" },
+          { name: "c2" },
+        ],
+        rows: ["r1", "r2"]
+      }
+    ]
+  };
+
+  const survey = new SurveyModel(matrixDropdownJson);
+  const table = new TableTest(survey, [], { matrixDropdownDetailRowThreshold: 0 }, []);
+  const columns = table.columns;
+
+  expect(columns.length).toBe(4);
+  expect(columns[0].name).toBe("matrixQ.r1.c1");
+  expect(columns[0].location).toBe(QuestionLocation.Row);
+  expect(columns[1].name).toBe("matrixQ.r1.c2");
+  expect(columns[1].location).toBe(QuestionLocation.Row);
+  expect(columns[2].name).toBe("matrixQ.r2.c1");
+  expect(columns[2].location).toBe(QuestionLocation.Row);
+  expect(columns[3].name).toBe("matrixQ.r2.c2");
+  expect(columns[3].location).toBe(QuestionLocation.Row);
+});
+
+test("check matrixDropdownDetailRowThreshold equals -1", () => {
+  const matrixDropdownJson = {
+    elements: [
+      {
+        type: "matrixdropdown",
+        name: "matrixQ",
+        columns: [
+          { name: "c1" },
+          { name: "c2" },
+        ],
+        rows: ["r1", "r2", "r3"]
+      }
+    ]
+  };
+
+  const survey = new SurveyModel(matrixDropdownJson);
+  const table = new TableTest(survey, [], { matrixDropdownDetailRowThreshold: -1 }, []);
+  const columns = table.columns;
+
+  expect(columns.length).toBe(6);
+  expect(columns[0].name).toBe("matrixQ.r1.c1");
+  expect(columns[0].location).toBe(QuestionLocation.Column);
+  expect(columns[1].name).toBe("matrixQ.r1.c2");
+  expect(columns[1].location).toBe(QuestionLocation.Column);
+  expect(columns[4].name).toBe("matrixQ.r3.c1");
+  expect(columns[4].location).toBe(QuestionLocation.Column);
+  expect(columns[5].name).toBe("matrixQ.r3.c2");
+  expect(columns[5].location).toBe(QuestionLocation.Column);
+});
+
+test("check set state with columns which not inside survey", () => {
+  const survey = new SurveyModel({
+    elements: [
+      {
+        name: "q1",
+        type: "text"
+      }
+    ]
+  });
+  let data = {
+    q1: "text1",
+    q2: "text2"
+  };
+  let table = new TableTest(survey, [data], {}, []);
+  table.state = {
+    elements: [
+      {
+        dataType: 0,
+        displayName: "q2",
+        isPublic: true,
+        isVisible: true,
+        location: 0,
+        name: "q2"
+      }
+    ]
+  };
+  table.refresh(true);
+  expect(table.columns[0].name).toBe("q1");
+  expect(table.columns[1].name).toBe("q2");
+  expect(table.columns[0].getCellData(table, data).displayValue).toEqual("text1");
+  expect(table.columns[0].getCellData(table, data).question).toBe(survey.getAllQuestions()[0]);
+  expect(table.columns[1].getCellData(table, data).displayValue).toEqual("text2");
+  expect(table.columns[1].getCellData(table, data).question).toBe(undefined);
+});
+
+test("getColumnByName uses Map cache and invalidates after state adds columns", () => {
+  const survey = new SurveyModel({
+    questions: [{ type: "text", name: "q1" }]
+  });
+  const table = new TableTest(survey, [{ q1: "text1", q2: "text2" }], {}, []);
+
+  expect(table.getColumnByName("q1").name).toBe("q1");
+  expect(table.getColumnByName("q2")).toBeUndefined();
+
+  table.state = {
+    elements: [
+      {
+        dataType: ColumnDataType.Text,
+        displayName: "q1",
+        isPublic: true,
+        isVisible: true,
+        location: QuestionLocation.Column,
+        name: "q1"
+      },
+      {
+        dataType: ColumnDataType.Text,
+        displayName: "q2",
+        isPublic: true,
+        isVisible: true,
+        location: QuestionLocation.Column,
+        name: "q2"
+      }
+    ]
+  };
+
+  expect(table.getColumnByName("q2").name).toBe("q2");
+  expect(table.getColumnByName("q1").name).toBe("q1");
+});
+
+test("check checkbox column with multi comments", () => {
+  const json = { "elements":
+         [{
+           "type": "checkbox",
+           "name": "question1",
+           "choices": [
+             {
+               "value": "item1",
+               "text": "Item 1",
+               "showCommentArea": true
+             },
+             {
+               "value": "item2",
+               "text": "Item 2"
+             },
+             {
+               "value": "item3",
+               "text": "Item 3"
+             }
+           ],
+           "colCount": 1
+         }]
+  };
+  const survey = new SurveyModel(json);
+  const data = { "question1":
+    [
+      {
+        "value": "item1",
+        "comment": "aaaaa"
+      },
+      {
+        "value": "item2"
+      }
+    ]
+  };
+  survey.data = data;
+  let table = new TableTest(survey, [], {}, []);
+  expect((<any>table).columns.length).toEqual(1);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1, Item 2");
+
+  table = new TableTest(survey, [], { useValuesAsLabels: true }, []);
+  expect((<any>table).columns.length).toEqual(1);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("[\"item1\",\"item2\"]");
+});
+
+test("check dropdown column with multi comments", () => {
+  const json = { "elements":
+         [{
+           "type": "dropdown",
+           "name": "question1",
+           "choices": [
+             {
+               "value": "item1",
+               "text": "Item 1",
+               "showCommentArea": true
+             },
+             {
+               "value": "item2",
+               "text": "Item 2"
+             },
+             {
+               "value": "item3",
+               "text": "Item 3"
+             }
+           ],
+           "colCount": 1
+         }]
+  };
+  const survey = new SurveyModel(json);
+  const data = { "question1": {
+    "value": "item1",
+    "comment": "aaaaa" } };
+  survey.data = data;
+  let table = new TableTest(survey, [], {}, []);
+  expect((<any>table).columns.length).toEqual(1);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1");
+
+  table = new TableTest(survey, [], { useValuesAsLabels: true }, []);
+  expect((<any>table).columns.length).toEqual(1);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("item1");
+});
+
+test("check radiogroup column with multi comments", () => {
+  const json = { "elements":
+         [{
+           "type": "radiogroup",
+           "name": "question1",
+           "choices": [
+             {
+               "value": "item1",
+               "text": "Item 1",
+               "showCommentArea": true
+             },
+             {
+               "value": "item2",
+               "text": "Item 2"
+             },
+             {
+               "value": "item3",
+               "text": "Item 3"
+             }
+           ],
+           "colCount": 1
+         }]
+  };
+  const survey = new SurveyModel(json);
+  const data = { "question1":
+      {
+        "value": "item1",
+        "comment": "aaaaa"
+      },
+  };
+  survey.data = data;
+  let table = new TableTest(survey, [], {}, []);
+  expect((<any>table).columns.length).toEqual(1);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1");
+
+  table = new TableTest(survey, [], { useValuesAsLabels: true }, []);
+  expect((<any>table).columns.length).toEqual(1);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("item1");
+});
+
+test("check radiogroup column with multi comments", () => {
+  const json = {
+    "pages": [
+      {
+        "name": "page1",
+        "elements": [
+          {
+            "type": "matrix",
+            "name": "question1",
+            "columns": [
+              {
+                "value": "column1",
+                "text": "Column 1"
+              },
+              {
+                "value": "column2",
+                "text": "Column 2"
+              },
+              {
+                "value": "column3",
+                "text": "Column 3"
+              }
+            ],
+            "rows": [
+              {
+                "value": "row1",
+                "text": "Row 1"
+              },
+              {
+                "value": "row2",
+                "text": "Row 2"
+              }
+            ],
+            "cellType": "checkbox"
+          }
+        ]
+      }
+    ],
+    "headerView": "advanced"
+  };
+  const survey = new SurveyModel(json);
+  const data = {
+    "question1": {
+      "row1": [
+        "column1"
+      ],
+      "row2": [
+        "column2",
+        "column3"
+      ]
+    }
+  };
+  survey.data = data;
+  let table = new TableTest(survey, [], {}, []);
+  expect((<any>table).columns.length).toEqual(2);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Column 1");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("Column 2, Column 3");
+
+  table = new TableTest(survey, [], { useValuesAsLabels: true }, []);
+  expect((<any>table).columns.length).toEqual(2);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("column1");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("column2, column3");
+});
+
+test("check checkbox column with custom itemDelimiter", () => {
+  const json = { "elements":
+         [{
+           "type": "checkbox",
+           "name": "question1",
+           "choices": [
+             { "value": "item1", text: "Item 1" },
+             { "value": "item2", text: "Item 2" },
+             { "value": "item3", text: "Item 3" }
+           ],
+         }]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{ "question1": ["item1", "item2"] }];
+  let table = new TableTest(survey, data, { itemsDelimiter: " + " }, []);
+  expect((<any>table).columns.length).toEqual(1);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1 + Item 2");
+});
+
+test("check tagbox column with comment", () => {
+  const json = { "elements":
+         [{
+           "type": "tagbox",
+           "name": "question4",
+           "choices": [
+             "Item 1",
+             "Item 2",
+             "Item 3"
+           ],
+           "showCommentArea": true
+         }]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{
+    "question4": [
+      "Item 1",
+      "Item 3",
+    ],
+    "question4-Comment": "Comment Q4",
+  }];
+  let table = new TableTest(survey, data);
+  expect((<any>table).columns.length).toEqual(2);
+  expect((<any>table).columns[0] instanceof CheckboxColumn).toBeTruthy();
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1, Item 3");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("Comment Q4");
+});
+
+test("check tagbox column with other item", () => {
+  const json = { "elements":
+         [{
+           "type": "tagbox",
+           "name": "question4",
+           "choices": [
+             "Item 1",
+             "Item 2",
+             "Item 3"
+           ],
+           "showOtherItem": true,
+           "otherText": "Other for multi dropdown"
+         }]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{
+    "question4": [
+      "Item 1",
+      "Item 3",
+      "other"
+    ],
+    "question4-Comment": "Other Q4",
+  }];
+  let table = new TableTest(survey, data);
+  expect((<any>table).columns.length).toEqual(2);
+  expect((<any>table).columns[0] instanceof CheckboxColumn).toBeTruthy();
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1, Item 3, Other for multi dropdown");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("Other Q4");
+});
+
+test("tagbox column from ColumnsBuilderFactory", () => {
+  expect(ColumnsBuilderFactory.Instance.getColumnsBuilder("tagbox") instanceof CheckboxColumnsBuilder).toBeTruthy();
+});
+
+test("check tagbox column with other item and comment", () => {
+  const json = { "elements":
+         [{
+           "type": "tagbox",
+           "name": "question4",
+           "choices": [
+             "Item 1",
+             "Item 2",
+             "Item 3"
+           ],
+           "showOtherItem": true,
+           "showCommentArea": true,
+           "otherText": "Other for multi dropdown"
+         }]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{
+    "question4": [
+      "Item 1",
+      "Item 3",
+      "Other Q4"
+    ],
+    "question4-Comment": "Comment Q4",
+  }];
+  let table = new TableTest(survey, data);
+  expect((<any>table).columns.length).toEqual(2);
+  expect((<any>table).columns[0] instanceof CheckboxColumn).toBeTruthy();
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1, Item 3, Other Q4");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("Comment Q4");
+});
+
+test("Radiogroup other with storeOthersAsComment cases", () => {
+  const json = {
+    questions: [
+      {
+        type: "radiogroup",
+        name: "radio1",
+        storeOthersAsComment: false,
+        choices: [{ value: "choiceValue", text: "choiceText" }],
+        hasOther: true,
+      },
+      {
+        type: "radiogroup",
+        name: "radio2",
+        storeOthersAsComment: true,
+        choices: [{ value: "choiceValue", text: "choiceText" }],
+        hasOther: true,
+      },
+    ],
+  };
+  const survey = new SurveyModel(json);
+  const data = { radio1: "otherValue1", "radio2": "other", "radio2-Comment": "otherValue2" };
+  survey.data = data;
+
+  const allQuestions = survey.getAllQuestions();
+  const question1 = allQuestions[0] as QuestionRadiogroupModel;
+  expect(question1.hasOther).toBeTruthy();
+  expect(question1.getStoreOthersAsComment()).toBeFalsy();
+  expect(question1.displayValue).toBe("otherValue1");
+
+  const question2 = allQuestions[1] as QuestionRadiogroupModel;
+  expect(question2.hasOther).toBeTruthy();
+  expect(question2.getStoreOthersAsComment()).toBeTruthy();
+  expect(question2.displayValue).toBe("otherValue2");
+
+  let table = new TableTest(survey, [data]);
+  expect(table.columns.length).toEqual(3);
+  expect(table.columns[0] instanceof SingleChoiceColumn).toBeTruthy();
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("otherValue1");
+  expect(table.columns[1] instanceof SingleChoiceColumn).toBeTruthy();
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("Other (describe)");
+  expect(table.columns[2] instanceof OtherColumn).toBeTruthy();
+  expect(table.columns[2].getCellData(table, data).displayValue).toBe("otherValue2");
+});
+
+test("Multiple file names appear as a single unreadable string - https://github.com/surveyjs/survey-analytics/issues/686", () => {
+  const surveyJson = {
+    title: "multiple files upload",
+    pages: [
+      {
+        name: "page1",
+        elements: [
+          {
+            type: "file",
+            name: "question1",
+            allowMultiple: true,
+            allowImagesPreview: false,
+            storeDataAsText: false,
+            maxSize: 5242880,
+            maxFiles: 15,
+          },
+          {
+            type: "file",
+            name: "question3",
+            allowMultiple: true,
+            allowImagesPreview: false,
+            storeDataAsText: false,
+            maxSize: 5242880,
+            maxFiles: 15,
+          },
+          {
+            type: "file",
+            name: "question2",
+            allowImagesPreview: false,
+            storeDataAsText: false,
+            maxSize: 5242880,
+          },
+        ],
+      },
+    ],
+    clearInvisibleValues: "none",
+    formEmailTo: "{profileEmail}",
+  };
+  const survey = new SurveyModel(surveyJson);
+  const data = {
+    question1: [
+      {
+        name: "report.xlsx",
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content: "http://localhost:8080/files/report.xlsx",
+      },
+      {
+        name: "summary.pdf",
+        type: "application/pdf",
+        content: "http://localhost:8080/files/summary.pdf",
+      },
+    ],
+    question3: [
+      {
+        name: "presentation.pptx",
+        type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        content: "http://localhost:8080/files/presentation.pptx",
+      },
+      {
+        name: "slides.pptx",
+        type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        content: "http://localhost:8080/files/slides.pptx",
+      },
+      {
+        name: "data.json",
+        type: "application/json",
+        content: "http://localhost:8080/files/data.json",
+      },
+    ],
+    question2: [
+      {
+        name: "image.png",
+        type: "image/png",
+        content: "http://localhost:8080/files/image.png",
+      },
+    ],
+  };
+
+  const table = new TableTest(survey, [data]);
+  expect(table.columns.length).toEqual(3);
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("<div><a download=\"report.xlsx\" href=\"http://localhost:8080/files/report.xlsx\"></a><br><a download=\"summary.pdf\" href=\"http://localhost:8080/files/summary.pdf\"></a></div>");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("<div><a download=\"presentation.pptx\" href=\"http://localhost:8080/files/presentation.pptx\"></a><br><a download=\"slides.pptx\" href=\"http://localhost:8080/files/slides.pptx\"></a><br><a download=\"data.json\" href=\"http://localhost:8080/files/data.json\"></a></div>");
+  expect(table.columns[2].getCellData(table, data).displayValue).toBe("<div><a download=\"image.png\" href=\"http://localhost:8080/files/image.png\"></a></div>");
+});
+
+test("check flattened checkbox columns", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "fav_cars",
+        title: "Favorite Cars",
+        choices: [
+          { value: "car1", text: "Car 1" },
+          { value: "car2", text: "Car 2" },
+          { value: "car3", text: "Car 3" }
+        ]
+      }
+    ]
+  };
+
+  const data1 = { fav_cars: ["car1", "car2"] };
+  const data2 = { fav_cars: ["car2"] };
+  const data3 = { fav_cars: [] };
+
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [data1, data2, data3], { splitMultiSelectIntoColumns: true });
+
+  // Should create 3 columns, one for each choice
+  expect(table.columns.length).toEqual(3);
+
+  // Check column names
+  expect(table.columns[0].name).toBe("fav_cars.car1");
+  expect(table.columns[1].name).toBe("fav_cars.car2");
+  expect(table.columns[2].name).toBe("fav_cars.car3");
+
+  // Check column display names
+  expect(table.columns[0].displayName).toBe("Favorite Cars - Car 1");
+  expect(table.columns[1].displayName).toBe("Favorite Cars - Car 2");
+  expect(table.columns[2].displayName).toBe("Favorite Cars - Car 3");
+
+  // Check values for first data row (selected car1 first, car2 second)
+  // Default is checkmark mode
+  expect(table.columns[0].getCellData(table, data1).displayValue).toBe("&#10004;");
+  expect(table.columns[1].getCellData(table, data1).displayValue).toBe("&#10004;");
+  expect(table.columns[2].getCellData(table, data1).displayValue).toBe("");
+
+  // Check values for second data row (only car2 selected)
+  expect(table.columns[0].getCellData(table, data2).displayValue).toBe("");
+  expect(table.columns[1].getCellData(table, data2).displayValue).toBe("&#10004;");
+  expect(table.columns[2].getCellData(table, data2).displayValue).toBe("");
+
+  // Check values for third data row (nothing selected)
+  expect(table.columns[0].getCellData(table, data3).displayValue).toBe("");
+  expect(table.columns[1].getCellData(table, data3).displayValue).toBe("");
+  expect(table.columns[2].getCellData(table, data3).displayValue).toBe("");
+});
+
+test("check flattened checkbox columns with useNamesAsTitles", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "fav_cars",
+        title: "Favorite Cars",
+        choices: [
+          { value: "car1", text: "Car 1" },
+          { value: "car2", text: "Car 2" }
+        ]
+      }
+    ]
+  };
+
+  const data = { fav_cars: ["car1"] };
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [data], { splitMultiSelectIntoColumns: true, useNamesAsTitles: true });
+
+  expect(table.columns.length).toEqual(2);
+  expect(table.columns[0].displayName).toBe("fav_cars - car1");
+  expect(table.columns[1].displayName).toBe("fav_cars - car2");
+});
+
+test("check flattened checkbox columns with order mode", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "fav_cars",
+        title: "Favorite Cars",
+        choices: [
+          { value: "car1", text: "Car 1" },
+          { value: "car2", text: "Car 2" },
+          { value: "car3", text: "Car 3" }
+        ]
+      }
+    ]
+  };
+
+  const data1 = { fav_cars: ["car1", "car2"] };
+  const data2 = { fav_cars: ["car2"] };
+
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [data1, data2], { splitMultiSelectIntoColumns: true, multiSelectColumnValueFormat: "selectionOrder" });
+
+  expect(table.columns.length).toEqual(3);
+
+  // Check values for first data row (selected car1 first, car2 second) - should show order
+  expect(table.columns[0].getCellData(table, data1).displayValue).toBe("1");
+  expect(table.columns[1].getCellData(table, data1).displayValue).toBe("2");
+  expect(table.columns[2].getCellData(table, data1).displayValue).toBe("");
+
+  // Check values for second data row (only car2 selected)
+  expect(table.columns[0].getCellData(table, data2).displayValue).toBe("");
+  expect(table.columns[1].getCellData(table, data2).displayValue).toBe("1");
+  expect(table.columns[2].getCellData(table, data2).displayValue).toBe("");
+});
+
+test("check non-flattened checkbox columns still work", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "question1",
+        choices: [
+          { value: "item1", text: "Item 1" },
+          { value: "item2", text: "Item 2" },
+          { value: "item3", text: "Item 3" }
+        ]
+      }
+    ]
+  };
+
+  const data = { question1: ["item1", "item3"] };
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [data], { splitMultiSelectIntoColumns: false });
+
+  // Should create only 1 column for the checkbox question
+  expect(table.columns.length).toEqual(1);
+  expect(table.columns[0].name).toBe("question1");
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("Item 1, Item 3");
+});
+
+test("tagbox questions support splitMultiSelectIntoColumns", () => {
+  const json = {
+    elements: [
+      {
+        type: "tagbox",
+        name: "tags",
+        title: "Select Tags",
+        choices: [
+          { value: "tag1", text: "Tag 1" },
+          { value: "tag2", text: "Tag 2" },
+          { value: "tag3", text: "Tag 3" }
+        ]
+      }
+    ]
+  };
+
+  const data1 = { tags: ["tag1", "tag2"] };
+  const data2 = { tags: ["tag2"] };
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [data1, data2], { splitMultiSelectIntoColumns: true });
+
+  // Should create 3 columns for the 3 choices
+  expect(table.columns.length).toEqual(3);
+
+  // Check column names and display names
+  expect(table.columns[0].name).toBe("tags.tag1");
+  expect(table.columns[1].name).toBe("tags.tag2");
+  expect(table.columns[2].name).toBe("tags.tag3");
+  expect(table.columns[0].displayName).toBe("Select Tags - Tag 1");
+  expect(table.columns[1].displayName).toBe("Select Tags - Tag 2");
+  expect(table.columns[2].displayName).toBe("Select Tags - Tag 3");
+
+  // Check values for first data row (selected tag1 and tag2)
+  // Default is checkmark mode
+  expect(table.columns[0].getCellData(table, data1).displayValue).toBe("&#10004;");
+  expect(table.columns[1].getCellData(table, data1).displayValue).toBe("&#10004;");
+  expect(table.columns[2].getCellData(table, data1).displayValue).toBe("");
+
+  // Check values for second data row (only tag2 selected)
+  expect(table.columns[0].getCellData(table, data2).displayValue).toBe("");
+  expect(table.columns[1].getCellData(table, data2).displayValue).toBe("&#10004;");
+  expect(table.columns[2].getCellData(table, data2).displayValue).toBe("");
+});
+
+test("radiogroup with nested choice elements creates columns for nested questions", () => {
+  const json = {
+    elements: [
+      {
+        type: "radiogroup",
+        name: "Question4",
+        title: "Use of AI",
+        choices: [
+          { value: "no_ai", text: "I did not use AI" },
+          {
+            value: "used_ai",
+            text: "I used AI",
+            elements: [
+              { type: "text", name: "Question5", title: "Which AI tool?" },
+              { type: "text", name: "Question6", title: "What was it used for?" }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{ Question4: "used_ai", Question5: "ChatGPT", Question6: "Research" }];
+  const table = new TableTest(survey, data, {}, []);
+
+  expect(table.columns.length).toBe(3);
+  expect(table.columns[0].name).toBe("Question4");
+  expect(table.columns[0].displayName).toBe("Use of AI");
+  expect(table.columns[1].name).toBe("Question5");
+  expect(table.columns[1].displayName).toBe("Use of AI - Which AI tool?");
+  expect(table.columns[2].name).toBe("Question6");
+  expect(table.columns[2].displayName).toBe("Use of AI - What was it used for?");
+
+  expect(table.columns[0].getCellData(table, data).displayValue).toBe("I used AI");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("ChatGPT");
+  expect(table.columns[2].getCellData(table, data).displayValue).toBe("Research");
+});
+
+test("checkbox with nested choice elements creates columns for nested questions", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "tools",
+        title: "Tools Used",
+        choices: [
+          { value: "manual", text: "Manual" },
+          {
+            value: "ai",
+            text: "AI",
+            elements: [
+              { type: "text", name: "aiTool", title: "AI Tool Name" }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{ tools: ["ai"], aiTool: "GPT" }];
+  const table = new TableTest(survey, data, {}, []);
+
+  expect(table.columns.length).toBe(2);
+  expect(table.columns[0].name).toBe("tools");
+  expect(table.columns[1].name).toBe("aiTool");
+  expect(table.columns[1].displayName).toBe("Tools Used - AI Tool Name");
+  expect(table.columns[1].getCellData(table, data).displayValue).toBe("GPT");
+});
+
+test("showChoiceNestedQuestionParentTitle adds parent title prefix to nested columns", () => {
+  const json = {
+    elements: [
+      {
+        type: "radiogroup",
+        name: "Question4",
+        title: "Use of AI",
+        choices: [
+          { value: "no_ai", text: "I did not use AI" },
+          {
+            value: "used_ai",
+            text: "I used AI",
+            elements: [
+              { type: "text", name: "Question5", title: "Which AI tool?" },
+              { type: "text", name: "Question6", title: "What was it used for?" }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{ Question4: "used_ai", Question5: "ChatGPT", Question6: "Research" }];
+  const table = new TableTest(survey, data, { showChoiceNestedQuestionParentTitle: true }, []);
+
+  expect(table.columns.length).toBe(3);
+  expect(table.columns[0].displayName).toBe("Use of AI");
+  expect(table.columns[1].displayName).toBe("Use of AI - Which AI tool?");
+  expect(table.columns[2].displayName).toBe("Use of AI - What was it used for?");
+
+  const tableNoPrefix = new TableTest(survey, data, { showChoiceNestedQuestionParentTitle: false }, []);
+  expect(tableNoPrefix.columns[1].displayName).toBe("Which AI tool?");
+  expect(tableNoPrefix.columns[2].displayName).toBe("What was it used for?");
+});
+
+test("nested question column keeps localized parent title prefix after locale change", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "features",
+        title: {
+          default: "Which product features matter to you?",
+          // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+          fr: "Quelles fonctionnalités du produit sont importantes pour vous ?"
+        },
+        choices: [
+          { value: "dashboards", text: "Dashboards" },
+          {
+            value: "reports",
+            text: "Reports",
+            elements: [
+              {
+                type: "text",
+                name: "reportTopics",
+                title: {
+                  default: "What topics do you want reports on?",
+                  fr: "Sur quels sujets souhaitez-vous obtenir des rapports ?"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(json);
+  const table = new TableTest(survey, [], {}, []);
+
+  expect(table.columns[1].name).toBe("reportTopics");
+  expect(table.columns[1].displayName).toBe("Which product features matter to you? - What topics do you want reports on?");
+
+  table.locale = "fr";
+  // eslint-disable-next-line surveyjs/eslint-plugin-i18n/only-english-or-code
+  expect(table.columns[1].displayName).toBe("Quelles fonctionnalités du produit sont importantes pour vous ? - Sur quels sujets souhaitez-vous obtenir des rapports ?");
+
+  table.locale = "";
+  expect(table.columns[1].displayName).toBe("Which product features matter to you? - What topics do you want reports on?");
+});
+
+test("checkbox with splitMultiSelectIntoColumns and nested choice elements", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "tools",
+        title: "Tools Used",
+        choices: [
+          { value: "manual", text: "Manual" },
+          {
+            value: "ai",
+            text: "AI",
+            elements: [
+              { type: "text", name: "aiTool", title: "AI Tool Name" }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{ tools: ["ai"], aiTool: "GPT" }];
+  const table = new TableTest(survey, data, { splitMultiSelectIntoColumns: true }, []);
+
+  expect(table.columns[0].name).toBe("tools.manual");
+  expect(table.columns[0].displayName).toBe("Tools Used - Manual");
+  expect(table.columns[1].name).toBe("tools.ai");
+  expect(table.columns[1].displayName).toBe("Tools Used - AI");
+  expect(table.columns[2].name).toBe("aiTool");
+  expect(table.columns[2].displayName).toBe("Tools Used - AI Tool Name");
+  expect(table.columns[2].getCellData(table, data).displayValue).toBe("GPT");
+});
+
+test("checkbox with splitMultiSelectIntoColumns and showChoiceNestedQuestionParentTitle", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "tools",
+        title: "Tools Used",
+        choices: [
+          { value: "manual", text: "Manual" },
+          {
+            value: "ai",
+            text: "AI",
+            elements: [
+              { type: "text", name: "aiTool", title: "AI Tool Name" }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(json);
+  const data = [{ tools: ["ai"], aiTool: "GPT" }];
+  const table = new TableTest(survey, data, { splitMultiSelectIntoColumns: true, showChoiceNestedQuestionParentTitle: true }, []);
+
+  expect(table.columns[2].name).toBe("aiTool");
+  expect(table.columns[2].displayName).toBe("Tools Used - AI Tool Name");
+});
+
+test("nested question value from previous row does not leak into rows without it", () => {
+  const json = {
+    elements: [
+      {
+        type: "checkbox",
+        name: "tools",
+        title: "Tools Used",
+        choices: [
+          { value: "manual", text: "Manual" },
+          {
+            value: "ai",
+            text: "AI",
+            elements: [
+              { type: "text", name: "aiTool", title: "AI Tool Name" }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const survey = new SurveyModel(json);
+  const data = [
+    { tools: ["ai"], aiTool: "GPT" },
+    { tools: ["manual"] }
+  ];
+  const table = new TableTest(survey, data, {}, []);
+
+  const tableData = table.getTableData();
+  expect(tableData[0]["aiTool"]).toBe("GPT");
+  expect(tableData[1]["aiTool"]).toBe("");
+});

@@ -27,11 +27,11 @@ function generateText(maxValue, minValue, stepsCount) {
 
 function getCustomData(model, level, arrowColor) {
   const question = model.question;
-  const name = model.name;
+  const name = model.type;
 
   const maxValue = question.rateMax;
   const minValue = question.rateMin;
-  const stepsCount = SurveyAnalytics.GaugePlotly.stepsCount;
+  const stepsCount = SurveyAnalyticsPlotly.GaugePlotly.stepsCount;
   const values = generateValues(maxValue, stepsCount);
   const text = generateText(maxValue, minValue, stepsCount);
   const colors = model.generateColors(maxValue, minValue, stepsCount);
@@ -112,12 +112,12 @@ function getCustomLayout(model, level, arrowColor) {
       showgrid: false,
       range: [-1, 1],
     },
-    plot_bgcolor: model.backgroundColor,
-    paper_bgcolor: model.backgroundColor,
+    plot_bgcolor: "transparent",
+    paper_bgcolor: "transparent",
   };
 }
 
-SurveyAnalytics.PlotlySetup.onPlotCreating.add((model, options) => {
+SurveyAnalyticsPlotly.PlotlySetup.onPlotCreating.add((model, options) => {
   if (model.chartType !== "gauge") return;
   const arrowColor = "#4e6198";
   const level = options.data[0].value;
@@ -125,10 +125,10 @@ SurveyAnalytics.PlotlySetup.onPlotCreating.add((model, options) => {
   options.layout = getCustomLayout(model, level, arrowColor);
 });
 
-var visPanel = new SurveyAnalytics.VisualizationPanel(
+var visPanel = new SurveyAnalyticsPlotly.VisualizationPanel(
   [survey.getQuestionByName("nps_score")],
   data,
   {}
 );
-visPanel.showHeader = true;
+visPanel.showToolbar = true;
 visPanel.render(document.getElementById("summaryContainer"));

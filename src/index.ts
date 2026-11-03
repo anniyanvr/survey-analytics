@@ -1,12 +1,14 @@
 export * from "./localizationManager";
 
 //localization
-import "./localization/farsi";
-import "./localization/french";
-import "./localization/norwegian";
-import "./localization/portuguese";
-import "./localization/russian";
-import "./localization/dutch";
+import "./analytics-localization/farsi";
+import "./analytics-localization/french";
+import "./analytics-localization/norwegian";
+import "./analytics-localization/portuguese";
+import "./analytics-localization/russian";
+import "./analytics-localization/dutch";
+import "./analytics-localization/arabic";
+import "./analytics-localization/japanese";
 
 export * from "./dataProvider";
 
@@ -18,10 +20,12 @@ export * from "./visualizationMatrixDynamic";
 export * from "./visualizationMatrixDropdown";
 export * from "./alternativeVizualizersWrapper";
 
-export * from "./tables/datatables";
 export * from "./tables/tabulator";
 
 export * from "./plotly/index";
 export * from "./wordcloud/wordcloud";
 export * from "./wordcloud/stopwords/index";
 export * from "./text";
+
+export * from "./dashboard";
+export * from "./pivot";

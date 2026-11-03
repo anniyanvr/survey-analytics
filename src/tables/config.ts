@@ -1,5 +1,5 @@
-import { Question, SurveyModel } from "survey-core";
-import { ITableOptions, Table } from "./table";
+import { Question } from "survey-core";
+import { ITable } from "./table-interfaces";
 
 export enum QuestionLocation {
   Column,
@@ -9,6 +9,8 @@ export enum ColumnDataType {
   Text,
   FileLink,
   Image,
+  NestedTable,
+  Html
 }
 
 export interface ICellData {
@@ -29,7 +31,8 @@ export interface IColumnData {
 export interface IColumn extends IColumnData {
   visibleIndex?: number;
   fromJSON(json: any): void;
-  getCellData(table: Table, data: any): ICellData;
+  getCellData(table: ITable, data: any): ICellData;
+  addParentQuestion?(parentQuestion: Question): void;
 }
 
 export interface ITableState {

@@ -1,28 +1,26 @@
 import { Question, QuestionBooleanModel } from "survey-core";
 import { ItemValue } from "survey-core";
 import { SelectBase } from "./selectBase";
-import { DataProvider } from "./dataProvider";
 import { localization } from "./localizationManager";
+import { VisualizationManager } from "./visualizationManager";
 
 export class BooleanModel extends SelectBase {
-  protected chartTypes: string[];
-  public chartType: string;
 
   constructor(
     question: Question,
     data: Array<{ [index: string]: any }>,
     options?: Object,
-    name?: string
+    type?: string
   ) {
-    super(question, data, options, name || "boolean");
+    super(question, data, options, type || "boolean");
   }
 
   protected getCorrectAnswerText(): string {
     const correctAnswerValue = this.booleanQuestion.correctAnswer;
-    if (this.booleanQuestion.valueTrue !== undefined && this.booleanQuestion.valueTrue === correctAnswerValue || !!correctAnswerValue) {
+    if(this.booleanQuestion.valueTrue !== undefined && this.booleanQuestion.valueTrue === correctAnswerValue || !!correctAnswerValue) {
       return this.booleanQuestion.locLabelTrue.textOrHtml;
     }
-    if (this.booleanQuestion.valueFalse !== undefined && this.booleanQuestion.valueFalse === correctAnswerValue || !correctAnswerValue) {
+    if(this.booleanQuestion.valueFalse !== undefined && this.booleanQuestion.valueFalse === correctAnswerValue || !correctAnswerValue) {
       return this.booleanQuestion.locLabelFalse.textOrHtml;
     }
     return correctAnswerValue;
@@ -34,6 +32,12 @@ export class BooleanModel extends SelectBase {
 
   public static trueColor = "";
   public static falseColor = "";
+
+  public getSelectedItemByValue(value: any): ItemValue {
+    const labels = this.getLabels();
+    const values = this.getValues();
+    return new ItemValue(value, labels[values.indexOf(value)]);
+  }
 
   public getSelectedItemByText(itemText: string) {
     const labels = this.getLabels();
@@ -50,7 +54,7 @@ export class BooleanModel extends SelectBase {
         ? this.booleanQuestion.valueFalse
         : false,
     ];
-    if (this.showMissingAnswers) {
+    if(this.showMissingAnswers) {
       values.push(undefined);
     }
     return values;
@@ -58,15 +62,17 @@ export class BooleanModel extends SelectBase {
 
   getLabels(): Array<string> {
     var labels = [].concat(this.getValues());
-    if (this.booleanQuestion.labelTrue !== undefined) {
+    if(this.booleanQuestion.labelTrue !== undefined) {
       labels[0] = this.booleanQuestion.locLabelTrue.textOrHtml;
     }
-    if (this.booleanQuestion.labelFalse !== undefined) {
+    if(this.booleanQuestion.labelFalse !== undefined) {
       labels[1] = this.booleanQuestion.locLabelFalse.textOrHtml;
     }
-    if (this.showMissingAnswers) {
+    if(this.showMissingAnswers) {
       labels[2] = localization.getString("missingAnswersLabel");
     }
     return labels;
   }
 }
+
+VisualizationManager.registerVisualizer("boolean", BooleanModel, undefined, "boolean");
